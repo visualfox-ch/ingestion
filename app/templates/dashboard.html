@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="30">
+    <title>Jarvis Health Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            width: 100%;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+        
+        .header h1 {
+            font-size: 3em;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .header .timestamp {
+            font-size: 1em;
+            opacity: 0.9;
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+        }
+        
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 6px;
+            background: var(--card-color);
+        }
+        
+        .card.healthy {
+            --card-color: #10b981;
+        }
+        
+        .card.degraded {
+            --card-color: #f59e0b;
+        }
+        
+        .card.unhealthy {
+            --card-color: #ef4444;
+        }
+        
+        .card-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #1f2937;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2em;
+            margin: 20px auto;
+        }
+        
+        .healthy .status-icon {
+            background: #d1fae5;
+            color: #10b981;
+        }
+        
+        .degraded .status-icon {
+            background: #fef3c7;
+            color: #f59e0b;
+        }
+        
+        .unhealthy .status-icon {
+            background: #fee2e2;
+            color: #ef4444;
+        }
+        
+        .status-text {
+            text-align: center;
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 15px;
+        }
+        
+        .metrics {
+            font-size: 0.9em;
+            color: #6b7280;
+            line-height: 1.8;
+        }
+        
+        .metrics div {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .metrics div:last-child {
+            border-bottom: none;
+        }
+        
+        .overall-status {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .overall-icon {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3em;
+            margin: 0 auto 20px;
+        }
+        
+        .overall-status.healthy .overall-icon {
+            background: #d1fae5;
+            color: #10b981;
+        }
+        
+        .overall-status.degraded .overall-icon {
+            background: #fef3c7;
+            color: #f59e0b;
+        }
+        
+        .overall-status.unhealthy .overall-icon {
+            background: #fee2e2;
+            color: #ef4444;
+        }
+        
+        .overall-title {
+            font-size: 2em;
+            font-weight: 700;
+            margin-bottom: 10px;
+            color: #1f2937;
+        }
+        
+        .overall-subtitle {
+            font-size: 1.2em;
+            color: #6b7280;
+        }
+        
+        .summary {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #e5e7eb;
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+        }
+        
+        .summary-item {
+            text-align: center;
+        }
+        
+        .summary-number {
+            font-size: 2em;
+            font-weight: 700;
+            color: #1f2937;
+        }
+        
+        .summary-label {
+            font-size: 0.9em;
+            color: #6b7280;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ Jarvis Health</h1>
+            <div class="timestamp">{{ timestamp }}</div>
+        </div>
+        
+        <div class="dashboard">
+            <!-- API Card -->
+            <div class="card {{ api_status }}">
+                <div class="card-title">🚀 API</div>
+                <div class="status-icon">{{ api_icon }}</div>
+                <div class="status-text">{{ api_text }}</div>
+                <div class="metrics">
+                    <div>
+                        <span>Latency</span>
+                        <strong>{{ api_latency }}</strong>
+                    </div>
+                    <div>
+                        <span>Checks</span>
+                        <strong>{{ api_checks }}</strong>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- DB Card -->
+            <div class="card {{ db_status }}">
+                <div class="card-title">💾 Database</div>
+                <div class="status-icon">{{ db_icon }}</div>
+                <div class="status-text">{{ db_text }}</div>
+                <div class="metrics">
+                    <div>
+                        <span>Postgres</span>
+                        <strong>{{ postgres_status }}</strong>
+                    </div>
+                    <div>
+                        <span>SQLite</span>
+                        <strong>{{ sqlite_status }}</strong>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Search Card -->
+            <div class="card {{ search_status }}">
+                <div class="card-title">🔍 Search</div>
+                <div class="status-icon">{{ search_icon }}</div>
+                <div class="status-text">{{ search_text }}</div>
+                <div class="metrics">
+                    <div>
+                        <span>Qdrant</span>
+                        <strong>{{ qdrant_status }}</strong>
+                    </div>
+                    <div>
+                        <span>Meilisearch</span>
+                        <strong>{{ meili_status }}</strong>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- LLM Card -->
+            <div class="card {{ llm_status }}">
+                <div class="card-title">🤖 LLM</div>
+                <div class="status-icon">{{ llm_icon }}</div>
+                <div class="status-text">{{ llm_text }}</div>
+                <div class="metrics">
+                    <div>
+                        <span>Anthropic</span>
+                        <strong>{{ anthropic_status }}</strong>
+                    </div>
+                    <div>
+                        <span>OpenAI</span>
+                        <strong>{{ openai_status }}</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Overall Status -->
+        <div class="overall-status {{ overall_status }}">
+            <div class="overall-icon">{{ overall_icon }}</div>
+            <div class="overall-title">{{ overall_title }}</div>
+            <div class="overall-subtitle">{{ overall_subtitle }}</div>
+            <div class="summary">
+                <div class="summary-item">
+                    <div class="summary-number">{{ healthy_count }}</div>
+                    <div class="summary-label">Healthy</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-number">{{ total_checks }}</div>
+                    <div class="summary-label">Total Checks</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-number">{{ duration_ms }}ms</div>
+                    <div class="summary-label">Response Time</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

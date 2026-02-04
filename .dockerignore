@@ -1,0 +1,100 @@
+# =============================================================================
+# Docker Build Context Exclusions - AGGRESSIVE OPTIMIZATION
+# =============================================================================
+# Context size reduction = MUCH faster docker build context send (SSH to NAS)
+# Large context = significant time loss even with BuildKit
+# =============================================================================
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python artifacts (especially compiled bytecode)
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+.eggs
+*.egg
+.mypy_cache
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.nox
+dist/
+build/
+
+# Virtual environments (never part of context)
+venv
+.venv
+env
+.env
+.env.local
+.env.*.local
+
+# IDE & editors
+.idea
+.vscode
+.DS_Store
+*.swp
+*.swo
+*~
+*.sublime-*
+.project
+.pydevproject
+
+# Docker build artifacts
+Dockerfile*
+docker-compose*.yml
+.docker
+.dockerignore
+
+# Documentation (not needed in image)
+*.md
+docs/
+README*
+CHANGELOG*
+LICENSE*
+
+# Testing (not needed in production)
+tests/
+test_*
+*_test.py
+.pytest_cache
+
+# Logs
+*.log
+logs/
+
+# OS files
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
+tests/
+test_*.py
+*_test.py
+conftest.py
+
+# Logs and temp files
+*.log
+*.tmp
+tmp/
+logs/
+
+# Data files (mounted via volume, not baked in)
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets (NEVER include)
+.env
+*.pem
+*.key
+secrets/
+credentials/

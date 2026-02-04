@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis Remediation Dashboard</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>Jarvis Remediation Dashboard</h1>
+                <span class="status-indicator" id="connection-status">Connected</span>
+            </div>
+
+            <!-- Uncertainty Snapshot -->
+            <section class="section uncertainty-section">
+                <div class="section-header">
+                    <h2>Agent Uncertainty</h2>
+                    <span class="badge" id="uncertainty-level">--</span>
+                </div>
+                <div class="uncertainty-body">
+                    <div class="uncertainty-metric">
+                        <span class="uncertainty-label">Confidence</span>
+                        <span class="uncertainty-value" id="uncertainty-score">--</span>
+                    </div>
+                    <div class="uncertainty-metric">
+                        <span class="uncertainty-label">Source Quality</span>
+                        <span class="uncertainty-value" id="uncertainty-source-quality">--</span>
+                    </div>
+                    <div class="uncertainty-metric wide">
+                        <span class="uncertainty-label">Reasons</span>
+                        <span class="uncertainty-value" id="uncertainty-reasons">--</span>
+                    </div>
+                    <div class="uncertainty-metric wide">
+                        <span class="uncertainty-label">Suggested Next Steps</span>
+                        <span class="uncertainty-value" id="uncertainty-suggestions">--</span>
+                    </div>
+                    <div class="uncertainty-meta">
+                        <span id="uncertainty-updated">Last update: --</span>
+                        <span id="uncertainty-query">Query: --</span>
+                    </div>
+                </div>
+            </section>
+            <div class="header-right">
+                <span class="last-update" id="last-update">Last update: --</span>
+                <button class="btn btn-secondary" id="refresh-btn">Refresh</button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Pending Approvals Section -->
+            <section class="section pending-section">
+                <div class="section-header">
+                    <h2>Pending Approvals</h2>
+                    <span class="badge" id="pending-count">0</span>
+                </div>
+                <div class="pending-list" id="pending-list">
+                    <div class="empty-state" id="empty-pending">
+                        <p>No pending approvals</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Stats and Activity Grid -->
+            <div class="stats-grid">
+                <!-- Metrics Summary -->
+                <section class="section metrics-section">
+                    <div class="section-header">
+                        <h2>Metrics Summary</h2>
+                    </div>
+                    <div class="metrics-grid" id="metrics-grid">
+                        <div class="metric-card">
+                            <span class="metric-value" id="metric-pending">0</span>
+                            <span class="metric-label">Pending</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-value" id="metric-approved">0</span>
+                            <span class="metric-label">Approved (7d)</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-value" id="metric-rejected">0</span>
+                            <span class="metric-label">Rejected (7d)</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-value" id="metric-success-rate">--%</span>
+                            <span class="metric-label">Success Rate</span>
+                        </div>
+                        <div class="metric-card wide">
+                            <span class="metric-value" id="metric-avg-latency">--</span>
+                            <span class="metric-label">Avg Approval Time</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Recent Activity -->
+                <section class="section activity-section">
+                    <div class="section-header">
+                        <h2>Recent Activity</h2>
+                        <span class="badge secondary" id="activity-count">0</span>
+                    </div>
+                    <div class="activity-list" id="activity-list">
+                        <div class="empty-state" id="empty-activity">
+                            <p>No recent activity</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Playbook Stats -->
+            <section class="section playbook-section">
+                <div class="section-header">
+                    <h2>Playbook Statistics</h2>
+                </div>
+                <div class="playbook-grid" id="playbook-grid">
+                    <div class="empty-state" id="empty-playbooks">
+                        <p>No playbook data available</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>Jarvis Phase 16.3B</span>
+            <span>Auto-refresh: 15s</span>
+        </footer>
+    </div>
+
+    <!-- Approval Modal -->
+    <div class="modal" id="approval-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Confirm Action</h3>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="modal-message">Are you sure you want to perform this action?</p>
+                <div class="form-group" id="reason-group">
+                    <label for="action-reason">Reason (optional):</label>
+                    <textarea id="action-reason" rows="3" placeholder="Enter reason..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
+                <button class="btn btn-primary" id="modal-confirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>

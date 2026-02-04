@@ -1,0 +1,130 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-ingestion"
+version = "2.0.0"
+description = "Jarvis Personal AI Assistant - Ingestion & Core Services"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Jarvis Team"}]
+
+dependencies = [
+    # ========================================================================
+    # LAYER 2: Heavy ML Packages (Compile once, cache indefinitely)
+    # Pin versions - these rarely change and are very large
+    # ========================================================================
+    "torch>=2.10.0",                           # 915 MB
+    "transformers>=5.0.0",                     # 10 MB (uses torch)
+    "sentence-transformers>=5.2.0",            # 500 MB
+    "qdrant-client>=1.16.0",                   # Vector DB
+    "scikit-learn>=1.8.0",                     # ML utilities
+    "scipy>=1.17.0",                           # Scientific computing
+    "numpy>=2.4.0",                            # Numerical arrays
+
+    # ========================================================================
+    # LAYER 3: Core Framework & Runtime (Stable, update weekly)
+    # ========================================================================
+    "fastapi>=0.128.0",                        # Web framework
+    "uvicorn>=0.40.0",                         # ASGI server
+    "pydantic>=2.12.0",                        # Data validation
+    "python-dotenv>=1.0.0",                    # Environment config
+    "aiohttp>=3.13.0",                         # Async HTTP
+    "python-multipart>=0.0.20",                # Form parsing
+
+    # ========================================================================
+    # LAYER 3: Database & ORM (PostgreSQL + caching)
+    # ========================================================================
+    "psycopg2-binary>=2.9.0",                  # PostgreSQL adapter
+    "psutil>=7.2.0",                           # System metrics
+    "filelock>=3.20.0",                        # Distributed locks
+
+    # ========================================================================
+    # LAYER 3: API Clients - LLM Providers (Feb 2026 Multi-Provider)
+    # ========================================================================
+    "anthropic>=0.77.0",                       # Claude API
+    "openai>=1.0.0",                           # GPT API (NEW)
+    "langfuse>=2.0.0",                         # Cost observability
+
+    # ========================================================================
+    # LAYER 3: Cloud & Data Services
+    # ========================================================================
+    "google-api-python-client>=2.188.0",       # Gmail, Drive, etc
+    "google-auth>=2.48.0",                     # Google auth
+    "google-auth-oauthlib>=1.2.0",             # OAuth
+    "google-auth-httplib2>=0.3.0",             # HTTP transport
+    "meilisearch>=0.40.0",                     # Full-text search
+    "beautifulsoup4>=4.14.0",                  # HTML parsing
+    "lxml>=6.0.0",                             # XML processing
+    "paramiko>=4.0.0",                         # SSH (NAS access)
+    "duckduckgo-search>=8.0.0",                # Web search
+
+    # ========================================================================
+    # LAYER 3: Messaging & Scheduling
+    # ========================================================================
+    "python-telegram-bot>=22.0",               # Telegram bot
+    "apscheduler>=3.11.0",                     # Task scheduler
+    "aiofiles>=23.0.0",                        # Async file ops
+
+    # ========================================================================
+    # LAYER 3: Observability & Monitoring
+    # ========================================================================
+    "prometheus-client>=0.24.0",               # Prometheus metrics
+    "requests>=2.32.0",                        # HTTP client
+    
+    # ========================================================================
+    # LAYER 3: Document Processing (Optional but included)
+    # ========================================================================
+    "pypdf>=3.0.0",                            # PDF extraction
+    "python-docx>=1.0.0",                      # DOCX parsing
+
+    # ========================================================================
+    # LAYER 3: Utilities
+    # ========================================================================
+    "pytz>=2025.0",                            # Timezone support
+    
+    # ========================================================================
+    # LAYER 3: Code Quality & Metrics (Phase 1: Self-Optimization)
+    # ========================================================================
+    "radon>=6.0.0",                            # Complexity + maintainability
+    "pylint>=3.0.0",                           # Duplication detection
+    "pytest>=8.0.0",                           # Test runner
+    "pytest-cov>=6.0.0",                       # Coverage collection
+]
+
+[project.optional-dependencies]
+# Testing dependencies (not in container, only for CI/CD)
+test = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+]
+
+# Development dependencies (local only)
+dev = [
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "ipython>=8.0.0",
+]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[project.scripts]
+# Phase 1: Code Metrics (Self-Optimization)
+collect-metrics = "app.code_metrics:main"
