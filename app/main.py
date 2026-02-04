@@ -6725,7 +6725,7 @@ def check_expired_actions():
 
 
 @app.get("/actions/permissions/{action_name}")
-def check_action_permission(action_name: str):
+def check_action_permission(action_name: str, user_id: Optional[str] = None):
     """
     Check the permission tier for a specific action type.
 
@@ -6737,7 +6737,7 @@ def check_action_permission(action_name: str):
     """
     from . import action_queue
 
-    tier = action_queue.get_action_tier(action_name)
+    tier = action_queue.get_action_tier(action_name, user_id=user_id)
     permissions = action_queue.load_permissions()
     tier_config = permissions.get("tiers", {}).get(tier.value, {})
 

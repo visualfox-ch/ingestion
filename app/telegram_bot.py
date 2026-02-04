@@ -3198,7 +3198,8 @@ def request_action_approval(
     description: str,
     target: str = None,
     context: dict = None,
-    urgent: bool = False
+    urgent: bool = False,
+    user_id: str = None
 ) -> dict:
     """
     Request approval for an action through the Intent-Approval-Execution system.
@@ -3233,7 +3234,8 @@ def request_action_approval(
         description=description,
         target=target,
         context=context,
-        urgent=urgent
+        urgent=urgent,
+        user_id=user_id
     )
 
     result = {

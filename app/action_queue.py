@@ -21,6 +21,7 @@ from enum import Enum
 import yaml
 
 from .observability import log_with_context
+from .db_safety import safe_list_query
 from .metrics import (
     AUTONOMOUS_ACTIONS_TOTAL,
     AUTONOMOUS_APPROVAL_DECISIONS,
@@ -130,7 +131,48 @@ def _get_default_permissions() -> Dict:
 # PERMISSION CHECKING
 # =============================================================================
 
-def get_action_tier(action_name: str) -> ActionTier:
+def _get_autonomy_level(user_id: Optional[str]) -> Optional[str]:
+    if not user_id:
+        return None
+
+    try:
+        with safe_list_query('user_learned_preferences') as cur:
+            cur.execute(
+                """
+                SELECT preference_value
+                FROM user_learned_preferences
+                WHERE user_id = %s
+                  AND preference_key = %s
+                  AND is_active = true
+                ORDER BY updated_at DESC NULLS LAST
+                LIMIT 1
+                """,
+                (user_id, "autonomy.level"),
+            )
+            row = cur.fetchone()
+        if row and row.get("preference_value"):
+            return str(row.get("preference_value")).strip().lower()
+    except Exception as exc:
+        log_with_context(logger, "warning", "Failed to load autonomy level", error=str(exc))
+
+    return None
+
+
+def _apply_autonomy_level_to_tier(tier: ActionTier, autonomy_level: Optional[str]) -> ActionTier:
+    if autonomy_level not in {"low", "medium", "high"}:
+        return tier
+
+    # Conservative defaults: lower autonomy increases required oversight.
+    if autonomy_level == "low":
+        if tier == ActionTier.AUTONOMOUS:
+            return ActionTier.NOTIFY
+        if tier == ActionTier.NOTIFY:
+            return ActionTier.APPROVE_STANDARD
+
+    return tier
+
+
+def get_action_tier(action_name: str, user_id: Optional[str] = None) -> ActionTier:
     """
     Determine the tier for a given action.
     Returns FORBIDDEN for unknown actions (fail-safe default).
@@ -142,7 +184,9 @@ def get_action_tier(action_name: str) -> ActionTier:
         tier_actions = actions.get(tier_name, [])
         for action_def in tier_actions:
             if action_def.get("action") == action_name:
-                return ActionTier(tier_name)
+                base_tier = ActionTier(tier_name)
+                autonomy_level = _get_autonomy_level(user_id)
+                return _apply_autonomy_level_to_tier(base_tier, autonomy_level)
 
     # Check if explicitly forbidden
     forbidden_actions = actions.get("forbidden", [])
@@ -153,18 +197,22 @@ def get_action_tier(action_name: str) -> ActionTier:
     # Default: forbidden (fail-safe)
     log_with_context(logger, "warning", "Unknown action, defaulting to FORBIDDEN",
                     action=action_name)
-    return ActionTier.FORBIDDEN
+    base_tier = ActionTier.FORBIDDEN
+
+    autonomy_level = _get_autonomy_level(user_id)
+    adjusted = _apply_autonomy_level_to_tier(base_tier, autonomy_level)
+    return adjusted
 
 
-def is_action_allowed(action_name: str) -> bool:
+def is_action_allowed(action_name: str, user_id: Optional[str] = None) -> bool:
     """Check if an action is allowed (not forbidden)."""
-    tier = get_action_tier(action_name)
+    tier = get_action_tier(action_name, user_id=user_id)
     return tier != ActionTier.FORBIDDEN
 
 
-def requires_approval(action_name: str) -> bool:
+def requires_approval(action_name: str, user_id: Optional[str] = None) -> bool:
     """Check if an action requires user approval."""
-    tier = get_action_tier(action_name)
+    tier = get_action_tier(action_name, user_id=user_id)
     return tier in [ActionTier.APPROVE_STANDARD, ActionTier.APPROVE_CRITICAL]
 
 
@@ -223,6 +271,7 @@ def create_action_request(
     context: Optional[Dict] = None,
     content_preview: Optional[str] = None,
     urgent: bool = False,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new action request.
@@ -235,7 +284,10 @@ def create_action_request(
     """
     _ensure_queue_dirs()
 
-    tier = get_action_tier(action_name)
+    if user_id is None and context and isinstance(context, dict):
+        user_id = context.get("user_id")
+
+    tier = get_action_tier(action_name, user_id=user_id)
     permissions = load_permissions()
     tier_config = permissions.get("tiers", {}).get(tier.value, {})
 
