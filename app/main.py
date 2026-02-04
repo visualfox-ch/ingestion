@@ -70,6 +70,7 @@ from .routers.consciousness_reciprocal_router import router as consciousness_rec
 from .routers.consciousness_transfer_router import router as consciousness_transfer_router
 from .routers.observer_field_router import router as observer_field_router
 from .routers.consciousness_temporal_router import router as consciousness_temporal_router
+from .routers.decision_log_router import router as decision_log_router
 
 app = FastAPI()
 
@@ -145,6 +146,7 @@ app.include_router(consciousness_reciprocal_router)
 app.include_router(consciousness_transfer_router)
 app.include_router(observer_field_router)
 app.include_router(consciousness_temporal_router)
+app.include_router(decision_log_router)
 
 # =============================================================================
 # PHASE 18.2: AGENT UNCERTAINTY SNAPSHOT (UI MVP)
