@@ -32,6 +32,11 @@ RAG_REGRESSION_ENABLED = os.environ.get("JARVIS_RAG_REGRESSION_ENABLED", "true")
 RAG_REGRESSION_HOUR = int(os.environ.get("JARVIS_RAG_REGRESSION_HOUR", "2"))
 RAG_REGRESSION_MINUTE = int(os.environ.get("JARVIS_RAG_REGRESSION_MINUTE", "30"))
 
+# Phase 2 gate evaluation schedule (hour/minute)
+PHASE2_GATE_ENABLED = os.environ.get("JARVIS_PHASE2_GATE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+PHASE2_GATE_HOUR = int(os.environ.get("JARVIS_PHASE2_GATE_HOUR", "6"))  # 06:00 UTC daily
+PHASE2_GATE_MINUTE = int(os.environ.get("JARVIS_PHASE2_GATE_MINUTE", "0"))
+
 # Timezone (from environment or default)
 TIMEZONE = os.environ.get("TZ", "Europe/Zurich")
 
@@ -203,12 +208,24 @@ def start_scheduler() -> bool:
             replace_existing=True
         )
 
+        # Schedule Phase 2 gate evaluation (daily during validation window)
+        if PHASE2_GATE_ENABLED:
+            from .jobs.phase2_gate_job import run_phase2_gate_evaluation
+            _scheduler.add_job(
+                run_phase2_gate_evaluation,
+                CronTrigger(hour=PHASE2_GATE_HOUR, minute=PHASE2_GATE_MINUTE),
+                id="phase2_gate_evaluation",
+                name="Phase 2 Gate Evaluation",
+                replace_existing=True
+            )
+
         _scheduler.start()
         log_with_context(logger, "info", "Scheduler started",
                 briefing_time=f"{BRIEFING_HOUR:02d}:{BRIEFING_MINUTE:02d}",
                 workflow_monitor_interval_seconds=WORKFLOW_MONITOR_INTERVAL_SECONDS,
                 rag_regression_time=f"{RAG_REGRESSION_HOUR:02d}:{RAG_REGRESSION_MINUTE:02d}",
                 monthly_review_schedule="Day 31 at 03:00 UTC",
+                phase2_gate_time=f"{PHASE2_GATE_HOUR:02d}:{PHASE2_GATE_MINUTE:02d}" if PHASE2_GATE_ENABLED else "disabled",
                 timezone=TIMEZONE)
         return True
 

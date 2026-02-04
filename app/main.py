@@ -71,6 +71,7 @@ from .routers.consciousness_transfer_router import router as consciousness_trans
 from .routers.observer_field_router import router as observer_field_router
 from .routers.consciousness_temporal_router import router as consciousness_temporal_router
 from .routers.decision_log_router import router as decision_log_router
+from .routers.phase2_gate_router import router as phase2_gate_router
 
 app = FastAPI()
 
