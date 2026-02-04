@@ -38,6 +38,13 @@ def create_decision(entry: DecisionLogCreate, request: Request = None):
         raise HTTPException(status_code=400, detail="owner is required")
 
     decision_id = str(uuid4())
+    request_id = getattr(request.state, "request_id", None) if request else None
+    user_id_raw = get_current_user_id()
+    try:
+        user_id_int = int(user_id_raw) if user_id_raw is not None else 0
+    except Exception:
+        user_id_int = 0
+        log_with_context(logger, "warning", "Decision log user_id not numeric", user_id=user_id_raw)
     log_with_context(
         logger,
         "info",
@@ -54,9 +61,13 @@ def create_decision(entry: DecisionLogCreate, request: Request = None):
                 cur.execute(
                     """
                     INSERT INTO decision_log (
-                      id, decision_id, title, owner, context, rationale, impact, risk, tags, approval_id, source_doc
+                                            id, decision_id, title, owner, context, rationale, impact, risk, tags, approval_id, source_doc,
+                                            user_id, session_id, decision_text, decision_category, confidence, outcome_known, outcome,
+                                            feedback_score, lessons_applied
                     )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                                                        %s,%s,%s,%s,%s,%s,%s,
+                                                        %s,%s)
                     RETURNING *
                     """,
                     (
@@ -71,10 +82,19 @@ def create_decision(entry: DecisionLogCreate, request: Request = None):
                         entry.tags,
                         entry.approval_id,
                         entry.source_doc,
+                                                user_id_int,
+                                                request_id or "unknown",
+                                                f"{entry.title} — {entry.rationale}",
+                                                entry.context or "general",
+                                                0.5,
+                                                0,
+                                                None,
+                                                None,
+                                                [],
                     ),
                 )
                 row = cur.fetchone()
-        return {"data": row, "request_id": getattr(request.state, "request_id", None) if request else None}
+                return {"data": row, "request_id": request_id}
     except Exception as exc:
         log_with_context(logger, "error", "Decision log create failed", error=str(exc))
         raise HTTPException(status_code=500, detail="Failed to create decision log entry")
