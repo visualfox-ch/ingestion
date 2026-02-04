@@ -232,10 +232,10 @@ async def get_phase2_status(auth=Depends(auth_dependency)) -> Dict[str, Any]:
             "phase": current_phase,
             "enabled": enabled,
             "thresholds": {
-                "r0": thresholds.get(0, 0.0),
-                "r1": thresholds.get(1, 0.0),
-                "r2": thresholds.get(2, 0.0),
-                "r3": thresholds.get(3, 0.0),
+                "r0": thresholds.get("r0_confidence", 0.0),
+                "r1": thresholds.get("r1_confidence", 0.0),
+                "r2": thresholds.get("r2_confidence", 0.0),
+                "r3": thresholds.get("r3_confidence", 0.0),
             },
             "phase_description": {
                 0: "Phase 0: Auto-approval disabled (all manual)",
