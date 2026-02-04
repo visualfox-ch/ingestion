@@ -236,7 +236,7 @@ async def contradict_preference_endpoint(
 @router.post("/memory/settings/autonomy", response_model=Dict[str, Any])
 async def set_autonomy_settings_endpoint(
     req: AutonomySettingsRequest,
-    user_id: str = "micha",
+    user_id: Optional[str] = None,
     request: Request = None
 ):
     """Persist autonomy preferences (used for proactive behavior tuning)."""
@@ -278,7 +278,7 @@ async def set_autonomy_settings_endpoint(
 
 @router.get("/memory/settings/autonomy", response_model=Dict[str, Any])
 async def get_autonomy_settings_endpoint(
-    user_id: str = "micha",
+    user_id: Optional[str] = None,
     request: Request = None
 ):
     """Get stored autonomy preferences."""
@@ -310,7 +310,7 @@ async def get_autonomy_settings_endpoint(
 @router.post("/memory/settings/timezone", response_model=Dict[str, Any])
 async def set_timezone_endpoint(
     req: TimezoneSettingRequest,
-    user_id: str = "micha",
+    user_id: Optional[str] = None,
     request: Request = None
 ):
     """Persist user's preferred timezone (IANA name)."""
@@ -337,7 +337,7 @@ async def set_timezone_endpoint(
 
 @router.get("/memory/settings/timezone", response_model=Dict[str, Any])
 async def get_timezone_endpoint(
-    user_id: str = "micha",
+    user_id: Optional[str] = None,
     request: Request = None
 ):
     """Get user's preferred timezone."""

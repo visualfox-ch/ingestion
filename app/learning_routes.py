@@ -380,7 +380,7 @@ def get_top_suggestions(user_id: int = None, limit: int = 5):
 
 
 @router.get("/impact-summary")
-def get_impact_summary(user_id: int = None, days: int = 30):
+def get_impact_summary(user_id: str = None, days: int = 30):
     """
     Compact impact summary for Jarvis suggestions.
 
