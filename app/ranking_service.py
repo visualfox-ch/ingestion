@@ -257,7 +257,8 @@ def apply_temporal_decay(
                     if isinstance(ts, str):
                         try:
                             timestamp = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                        except:
+                        except ValueError as e:
+                            logger.debug(f"Failed to parse ISO timestamp '{ts}': {e}")
                             pass
                     elif isinstance(ts, datetime):
                         timestamp = ts

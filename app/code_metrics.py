@@ -216,7 +216,8 @@ class CodeMetricsCollector:
                                 comment_lines += 1
                             else:
                                 code_lines += 1
-                except:
+                except (IOError, UnicodeDecodeError) as e:
+                    logger.debug(f"Skipped file {filepath} due to read error: {e}")
                     continue
             
             return {

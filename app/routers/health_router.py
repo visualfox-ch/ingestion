@@ -482,7 +482,8 @@ def get_health_insights_summary():
             uptime_hours = int(uptime_seconds / 3600)
             uptime_days = int(uptime_hours / 24)
             uptime_str = f"{uptime_days}d {uptime_hours % 24}h" if uptime_days > 0 else f"{uptime_hours}h"
-        except:
+        except (OSError, ValueError) as e:
+            logger.warning(f"Failed to calculate system uptime: {e}")
             uptime_str = "unknown"
         
         # Get trend indicators
