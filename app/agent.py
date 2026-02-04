@@ -23,7 +23,8 @@ from .agent_state import AgentState
 from .context_builder import ContextBuilder
 from .tool_executor import ToolExecutor
 from .response_builder import ResponseBuilder, build_explanation, format_explanation_text
-from .diff_gate import DiffGateValidator, CodeChange, RiskClass
+from .diff_gate import DiffGateValidator, CodeChange
+from .risk_models import RiskClass
 from .confidence_scorer import JarvisConfidenceScorer, ConfidenceScore
 from .execution_orchestrator import JarvisExecutionOrchestrator
 from .metrics_bridge import JarvisMetricsBridge
