@@ -98,6 +98,42 @@ HOT_CONFIG_SCHEMA: Dict[str, Dict[str, Any]] = {
         "validator": lambda v: 0.0 <= v <= 1.0,
         "description": "Default weight for creative facette"
     },
+    "auto_approval_enabled": {
+        "type": "bool",
+        "default": True,
+        "validator": lambda v: isinstance(v, bool),
+        "description": "Enable/disable auto-approval engine"
+    },
+    "auto_approval_phase": {
+        "type": "int",
+        "default": 1,
+        "validator": lambda v: 0 <= v <= 2,
+        "description": "Auto-approval phase (0=manual, 1=conditional, 2=expanded)"
+    },
+    "auto_approval_r0_threshold": {
+        "type": "float",
+        "default": -1.0,
+        "validator": lambda v: v == -1.0 or 0.0 <= v <= 1.0,
+        "description": "Override R0 confidence threshold (-1 to use phase default)"
+    },
+    "auto_approval_r1_threshold": {
+        "type": "float",
+        "default": -1.0,
+        "validator": lambda v: v == -1.0 or 0.0 <= v <= 1.0,
+        "description": "Override R1 confidence threshold (-1 to use phase default)"
+    },
+    "auto_approval_r2_threshold": {
+        "type": "float",
+        "default": -1.0,
+        "validator": lambda v: v == -1.0 or 0.0 <= v <= 1.0,
+        "description": "Override R2 confidence threshold (-1 to use phase default)"
+    },
+    "auto_approval_r3_threshold": {
+        "type": "float",
+        "default": -1.0,
+        "validator": lambda v: v == -1.0 or 0.0 <= v <= 1.0,
+        "description": "Override R3 confidence threshold (-1 to use phase default)"
+    },
 }
 
 
