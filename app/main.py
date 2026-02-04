@@ -148,6 +148,64 @@ app.include_router(consciousness_transfer_router)
 app.include_router(observer_field_router)
 app.include_router(consciousness_temporal_router)
 app.include_router(decision_log_router)
+app.include_router(phase2_gate_router)
+
+# =============================================================================
+# MEMORY PROFILING ENDPOINT (PRE-Sprint Task C - Copilot)
+# =============================================================================
+@app.get("/monitoring/memory")
+async def memory_stats():
+    """
+    Memory profiling endpoint for leak detection.
+    Returns top memory allocations + GC stats.
+    """
+    try:
+        import tracemalloc
+        import psutil
+        import gc
+        
+        # Get process handle
+        process = psutil.Process()
+        
+        # Trigger garbage collection
+        gc.collect()
+        
+        # Take memory snapshot
+        if not tracemalloc.is_tracing():
+            tracemalloc.start()
+        
+        snapshot = tracemalloc.take_snapshot()
+        top_stats = snapshot.statistics('lineno')
+        
+        return {
+            "timestamp": datetime.now(pytz.UTC).isoformat(),
+            "memory": {
+                "rss_mb": round(process.memory_info().rss / 1024 / 1024, 2),
+                "vms_mb": round(process.memory_info().vms / 1024 / 1024, 2),
+                "percent": round(process.memory_percent(), 2)
+            },
+            "top_10_allocations": [
+                {
+                    "file": str(stat.traceback).split('", ')[0].replace('<traceback at 0x', '').strip('"'),
+                    "size_mb": round(stat.size / 1024 / 1024, 2),
+                    "size_kb": round(stat.size / 1024, 2),
+                    "count": stat.count
+                }
+                for stat in top_stats[:10]
+            ],
+            "gc_stats": {
+                "collections": gc.get_count(),
+                "garbage": len(gc.garbage),
+                "thresholds": gc.get_threshold()
+            },
+            "total_allocated_mb": round(sum(stat.size for stat in top_stats) / 1024 / 1024, 2)
+        }
+    except Exception as e:
+        logger.error(f"Memory profiling error: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "message": "Memory profiling unavailable"
+        }
 
 # =============================================================================
 # PHASE 18.2: AGENT UNCERTAINTY SNAPSHOT (UI MVP)
@@ -604,6 +662,12 @@ def startup_event():
     from .scheduler import start_scheduler
     from .embed import get_model
     from .prompt_assembler import get_prompt_version
+    import tracemalloc
+
+    # Enable tracemalloc for memory profiling endpoint
+    if not tracemalloc.is_tracing():
+        tracemalloc.start()
+        logger.info("Memory profiling (tracemalloc) enabled")
 
     # Preload embedding model to avoid cold-start latency on first search
     logger.info("Preloading embedding model...")
