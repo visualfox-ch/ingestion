@@ -29,17 +29,15 @@ import uuid
 import logging
 import hashlib
 import json
-from enum import Enum
 
-logger = logging.getLogger("jarvis.diff_gate")
+from .audit_trail import AuditTrail
+from .permission_matrix import PermissionMatrix, RiskLevel
+from .risk_models import RiskClass
+from .risk_models import RiskClass
+from .approval_auto import AutoApprovalEngine, ApprovalDecision
+from .observability import get_logger, log_with_context
 
-
-class RiskClass(Enum):
-    """NIST-aligned risk classification (simplified for code changes)."""
-    R0 = "R0"  # Low-risk: config, docs, optimization
-    R1 = "R1"  # Medium: small feature, refactor
-    R2 = "R2"  # High: critical path, API change
-    R3 = "R3"  # Escalate: security, breaking change
+logger = get_logger("jarvis.diff_gate")
 
 
 @dataclass
@@ -100,7 +98,7 @@ class DiffGateValidator:
         self,
         change: CodeChange,
         confidence_score: Optional[float] = None,
-        current_phase: int = 0
+        current_phase: Optional[int] = None
     ) -> ApprovalResult:
         """
         Core gate: diff-first + approval required.
@@ -116,7 +114,7 @@ class DiffGateValidator:
         Args:
             change: The code change being proposed
             confidence_score: Jarvis' confidence (0.0–1.0)
-            current_phase: Current autonomy phase (0=manual, 1+=conditional, 2+=auto)
+            current_phase: Current autonomy phase (0=manual, 1+=conditional, 2+=auto). If None, uses hot config.
         
         Returns:
             ApprovalResult (approved=True/False)
@@ -137,6 +135,56 @@ class DiffGateValidator:
                 approver="auto_reject_validation",
                 feedback=f"Change rejected: {validation['reason']}"
             )
+        
+        # Step 1b: Phase 1 - Check for conditional auto-approval
+        effective_phase = current_phase
+        if effective_phase is None:
+            effective_phase = AutoApprovalEngine._get_runtime_phase()
+
+        if effective_phase >= 1:
+            auto_decision, auto_reason = AutoApprovalEngine.should_auto_approve(
+                change_id=change.id,
+                audit_id=request_id,  # Use request_id as temp audit_id
+                risk_level=change.risk_class,
+                confidence_score=confidence_score or 0.0,
+                user_id=None,  # Will be updated by caller if available
+                phase=effective_phase
+            )
+            
+            if auto_decision == ApprovalDecision.AUTO_APPROVED:
+                log_with_context(
+                    logger, "info",
+                    "Phase 1: Auto-approval granted",
+                    change_id=change.id,
+                    confidence=f"{confidence_score:.1%}" if confidence_score else "unknown",
+                    risk=change.risk_class.value,
+                    reason=auto_reason
+                )
+                
+                # Return immediate approval (auto-approved)
+                return ApprovalResult(
+                    request_id=request_id,
+                    approved=True,
+                    approver="phase_1_auto_approval",
+                    feedback=f"Auto-approved: {auto_reason}"
+                )
+            
+            elif auto_decision == ApprovalDecision.QUEUED:
+                log_with_context(
+                    logger, "info",
+                    "Phase 1: Approval queued for business hours",
+                    change_id=change.id,
+                    reason=auto_reason
+                )
+                
+                return ApprovalResult(
+                    request_id=request_id,
+                    approved=False,
+                    approver="queued_off_hours",
+                    feedback=f"Queued: {auto_reason}"
+                )
+            
+            # Otherwise continue to manual approval (auto_decision == ApprovalDecision.MANUAL_REQUIRED)
         
         # Step 2: Build approval card
         card = self._build_approval_card(
@@ -172,17 +220,79 @@ class DiffGateValidator:
         # Step 4: Wait for response (SLA: 15 min)
         result = await self._wait_for_decision(request_id, timeout_sec=900)
         
-        # Step 5: Log decision immutably
-        if self.audit_log:
-            await self.audit_log.record_decision(
+        # Step 5: Map risk class to permission matrix
+        # Escalate approval tier based on risk and user role
+        risk_context = {
+            "action": "code_write",
+            "file_path": change.file_path,
+            "lines_changed": change.line_count,
+            "reversible": True if change.risk_class in (RiskClass.R0, RiskClass.R1) else False,
+            "data_type": "code"
+        }
+        
+        # Get escalated permission tier (0=no user context, use base tier)
+        perm_result = PermissionMatrix.check_permission_with_context(
+            action="code_write",
+            user_id=None,  # Will be updated by Telegram handler with actual user ID
+            context=risk_context
+        )
+        
+        # Step 6: Log decision immutably with permission context
+        # Record decision to audit trail (Gate A compliance)
+        decision_str = "approved" if result.approved else "rejected"
+        sla_seconds = int((datetime.utcnow() - datetime.fromisoformat(result.decided_at.replace('Z', '+00:00'))).total_seconds())
+        
+        audit_id = AuditTrail.record_decision(
+            request_id=request_id,
+            change_id=change.id,
+            decision=decision_str,
+            approver_id=0,  # Will be updated by Telegram handler with actual user ID
+            approver_name=result.approver,
+            risk_class=change.risk_class.value,
+            diff_hash=hashlib.sha256(change.full_diff.encode()).hexdigest(),
+            diff_preview=change.diff_preview,
+            decision_rationale=result.feedback or "",
+            decision_timestamp=datetime.utcnow(),
+            sla_seconds=sla_seconds,
+            sla_met=(sla_seconds <= 900)  # 15 min SLA
+        )
+        
+        if audit_id:
+            # Link permission check to approval decision (Gate B compliance)
+            PermissionMatrix.log_decision_link(
+                audit_id=audit_id,
+                permission_result=perm_result,
+                decision=decision_str
+            )
+            
+            # Record auto-approval decision if applicable (Phase 1)
+            if current_phase >= 1 and result.approver == "phase_1_auto_approval":
+                AutoApprovalEngine.record_decision(
+                    change_id=change.id,
+                    audit_id=audit_id,
+                    risk_level=change.risk_class,
+                    confidence_score=confidence_score or 0.0,
+                    decision=ApprovalDecision.AUTO_APPROVED,
+                    reason=result.feedback or "",
+                    user_role=None  # Will be populated from Telegram context
+                )
+            
+            log_with_context(
+                logger, "info",
+                "Decision recorded to immutable audit trail with permission context",
                 request_id=request_id,
-                change_id=change.id,
-                decision=result.approved,
-                approver=result.approver,
-                risk_class=change.risk_class.value,
-                diff_hash=hashlib.sha256(change.full_diff.encode()).hexdigest(),
-                feedback=result.feedback,
-                timestamp=result.decided_at
+                audit_id=audit_id,
+                decision=decision_str,
+                permission_tier=perm_result.get("tier"),
+                risk_level=perm_result.get("risk_level"),
+                confidence=f"{confidence_score:.1%}" if confidence_score else "unknown",
+                auto_approved=(result.approver == "phase_1_auto_approval")
+            )
+        else:
+            log_with_context(
+                logger, "error",
+                "Failed to record decision to audit trail",
+                request_id=request_id
             )
         
         return result
