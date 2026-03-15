@@ -21,6 +21,17 @@ from .connection_pool_metrics import get_pool_metrics
 
 logger = get_logger("jarvis.postgres_state")
 
+
+def _scope_from_namespace(namespace: Optional[str]) -> tuple[str, str]:
+    """Map legacy namespace to scope fields for dual-write migrations."""
+    mapping = {
+        "private": ("personal", "private"),
+        "work_projektil": ("projektil", "internal"),
+        "work_visualfox": ("visualfox", "internal"),
+        "shared": ("personal", "shared"),
+    }
+    return mapping.get(namespace or "work_projektil", ("projektil", "internal"))
+
 # Database connection config
 POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))
@@ -880,17 +891,46 @@ def record_ingest(
     error_msg: str = None
 ):
     """Record an ingest event (upsert)"""
+    scope_org, scope_visibility = _scope_from_namespace(namespace)
     with get_cursor() as cur:
-        cur.execute("""
-            INSERT INTO ingest_event
-            (source_path, namespace, ingest_type, ingest_ts, chunks_upserted, status, error_msg)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (source_path, ingest_type) DO UPDATE SET
-                ingest_ts = EXCLUDED.ingest_ts,
-                chunks_upserted = EXCLUDED.chunks_upserted,
-                status = EXCLUDED.status,
-                error_msg = EXCLUDED.error_msg
-        """, (source_path, namespace, ingest_type, ingest_ts, chunks_upserted, status, error_msg))
+        try:
+            cur.execute("""
+                INSERT INTO ingest_event
+                (source_path, namespace, scope_org, scope_visibility, ingest_type, ingest_ts, chunks_upserted, status, error_msg)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source_path, ingest_type) DO UPDATE SET
+                    namespace = EXCLUDED.namespace,
+                    scope_org = EXCLUDED.scope_org,
+                    scope_visibility = EXCLUDED.scope_visibility,
+                    ingest_ts = EXCLUDED.ingest_ts,
+                    chunks_upserted = EXCLUDED.chunks_upserted,
+                    status = EXCLUDED.status,
+                    error_msg = EXCLUDED.error_msg
+            """, (
+                source_path,
+                namespace,
+                scope_org,
+                scope_visibility,
+                ingest_type,
+                ingest_ts,
+                chunks_upserted,
+                status,
+                error_msg,
+            ))
+        except Exception as e:
+            # Backward compatibility for environments where scope columns are not present yet.
+            if "scope_org" not in str(e) and "scope_visibility" not in str(e):
+                raise
+            cur.execute("""
+                INSERT INTO ingest_event
+                (source_path, namespace, ingest_type, ingest_ts, chunks_upserted, status, error_msg)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source_path, ingest_type) DO UPDATE SET
+                    ingest_ts = EXCLUDED.ingest_ts,
+                    chunks_upserted = EXCLUDED.chunks_upserted,
+                    status = EXCLUDED.status,
+                    error_msg = EXCLUDED.error_msg
+            """, (source_path, namespace, ingest_type, ingest_ts, chunks_upserted, status, error_msg))
 
 
 def is_already_ingested(source_path: str, ingest_type: str) -> bool:
@@ -981,12 +1021,22 @@ def get_ingest_stats() -> Dict:
 def create_session(session_id: str, namespace: str) -> str:
     """Create a new conversation session"""
     now = datetime.now()
+    scope_org, scope_visibility = _scope_from_namespace(namespace)
     with get_cursor() as cur:
-        cur.execute("""
-            INSERT INTO conversation (session_id, namespace, created_at, updated_at, message_count)
-            VALUES (%s, %s, %s, %s, 0)
-            ON CONFLICT (session_id) DO NOTHING
-        """, (session_id, namespace, now, now))
+        try:
+            cur.execute("""
+                INSERT INTO conversation (session_id, namespace, scope_org, scope_visibility, created_at, updated_at, message_count)
+                VALUES (%s, %s, %s, %s, %s, %s, 0)
+                ON CONFLICT (session_id) DO NOTHING
+            """, (session_id, namespace, scope_org, scope_visibility, now, now))
+        except Exception as e:
+            if "scope_org" not in str(e) and "scope_visibility" not in str(e):
+                raise
+            cur.execute("""
+                INSERT INTO conversation (session_id, namespace, created_at, updated_at, message_count)
+                VALUES (%s, %s, %s, %s, 0)
+                ON CONFLICT (session_id) DO NOTHING
+            """, (session_id, namespace, now, now))
     return session_id
 
 
@@ -1065,17 +1115,48 @@ def set_telegram_user_state(
 ):
     """Update telegram user's state (upsert)"""
     now = datetime.now()
+    ns_value = namespace or "work_projektil"
+    default_org, default_visibility = _scope_from_namespace(ns_value)
     with get_cursor() as cur:
-        cur.execute("""
-            INSERT INTO telegram_user (user_id, session_id, namespace, role, updated_at)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET
-                session_id = COALESCE(%s, telegram_user.session_id),
-                namespace = COALESCE(%s, telegram_user.namespace),
-                role = COALESCE(%s, telegram_user.role),
-                updated_at = %s
-        """, (user_id, session_id, namespace or 'work_projektil', role or 'assistant', now,
-              session_id, namespace, role, now))
+        try:
+            cur.execute("""
+                INSERT INTO telegram_user (user_id, session_id, namespace, default_org, default_visibility, role, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    session_id = COALESCE(%s, telegram_user.session_id),
+                    namespace = COALESCE(%s, telegram_user.namespace),
+                    default_org = COALESCE(%s, telegram_user.default_org),
+                    default_visibility = COALESCE(%s, telegram_user.default_visibility),
+                    role = COALESCE(%s, telegram_user.role),
+                    updated_at = %s
+            """, (
+                user_id,
+                session_id,
+                ns_value,
+                default_org,
+                default_visibility,
+                role or "assistant",
+                now,
+                session_id,
+                namespace,
+                default_org if namespace is not None else None,
+                default_visibility if namespace is not None else None,
+                role,
+                now,
+            ))
+        except Exception as e:
+            if "default_org" not in str(e) and "default_visibility" not in str(e):
+                raise
+            cur.execute("""
+                INSERT INTO telegram_user (user_id, session_id, namespace, role, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    session_id = COALESCE(%s, telegram_user.session_id),
+                    namespace = COALESCE(%s, telegram_user.namespace),
+                    role = COALESCE(%s, telegram_user.role),
+                    updated_at = %s
+            """, (user_id, session_id, ns_value, role or 'assistant', now,
+                  session_id, namespace, role, now))
 
 
 def get_all_telegram_users() -> List[Dict]:

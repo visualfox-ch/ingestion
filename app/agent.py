@@ -29,8 +29,92 @@ from .confidence_scorer import JarvisConfidenceScorer, ConfidenceScore
 from .execution_orchestrator import JarvisExecutionOrchestrator
 from .metrics_bridge import JarvisMetricsBridge
 from .learning_manager import JarvisLearningManager
+from .model_router import get_router, AgentRole
+from .services.multi_model_router import get_multi_model_router, Provider
+from .services.dynamic_model_router import get_dynamic_model_router
+from .models import ScopeRef
+from .services.llm_optimizations import (
+    get_cached_tool_definitions,
+    optimize_context_window,
+    create_optimized_stream_callback,
+    invalidate_tool_cache
+)
 
 logger = get_logger("jarvis.agent")
+
+# Phase 21: Dynamic cost tracking
+try:
+    from .services.dynamic_config import record_api_cost
+    _TRACK_COSTS = True
+except ImportError:
+    _TRACK_COSTS = False
+
+# Tier 1 Quick Win: Reasoning Observability
+try:
+    from .services.reasoning_observer import (
+        start_reasoning_observation,
+        clear_current_observer,
+        classify_query_for_reasoning,
+    )
+    _REASONING_OBSERVABILITY = True
+except ImportError:
+    _REASONING_OBSERVABILITY = False
+
+
+# T-005: Simple query complexity classifier for model routing
+_COMPLEX_KEYWORDS = frozenset([
+    # Code-related
+    "implement", "debug", "refactor", "code", "script", "function", "class",
+    "algorithm", "optimize", "performance", "test", "unittest",
+    # Deep analysis
+    "explain", "analyze", "compare", "evaluate", "investigate", "research",
+    "strategy", "architecture", "design", "plan",
+    # Multi-step
+    "mehrere", "alle", "zusammenfassung", "überblick", "komplett", "vollständig",
+    # Complex search
+    "suche überall", "in allem", "cross-channel", "vergleiche",
+])
+
+_SIMPLE_KEYWORDS = frozenset([
+    # Greetings and small talk
+    "hallo", "hi", "hey", "guten", "morgen", "abend", "wie geht", "danke",
+    # Simple status
+    "status", "was gibt's", "was läuft", "update",
+    # Simple lookups
+    "wer ist", "was ist", "wann", "wo", "zeig mir",
+])
+
+
+def _classify_query_complexity(query: str) -> AgentRole:
+    """
+    Classify query complexity for model routing.
+
+    Returns:
+        AgentRole.PLANNER for simple queries (cheap/fast model)
+        AgentRole.SPECIALIST for complex queries (powerful model)
+    """
+    query_lower = query.lower()
+    query_words = set(query_lower.split())
+
+    # Check for complex keywords
+    if query_words & _COMPLEX_KEYWORDS:
+        return AgentRole.SPECIALIST
+
+    # Check for simple keywords
+    if query_words & _SIMPLE_KEYWORDS:
+        return AgentRole.PLANNER
+
+    # Heuristics based on query length and structure
+    # Short queries are typically simple
+    if len(query) < 50:
+        return AgentRole.PLANNER
+
+    # Long queries with multiple sentences are typically complex
+    if len(query) > 200 or query.count('.') > 2 or query.count('?') > 1:
+        return AgentRole.SPECIALIST
+
+    # Default to specialist for safety (better to use powerful model when unsure)
+    return AgentRole.SPECIALIST
 
 
 def _persist_session_memory(
@@ -418,7 +502,284 @@ Klinge wie ein erfahrener deutscher Ingenieur: kompetent, trocken, minimal.
 
 
 from .config import AGENT_MAX_ROUNDS as CONFIG_MAX_ROUNDS
-MAX_TOOL_ROUNDS = CONFIG_MAX_ROUNDS or 6  # Prevent infinite loops - read from config (default 6)
+from .live_config import get_config
+
+def get_max_tool_rounds() -> int:
+    """Get max rounds from live config (allows runtime changes without deploy)."""
+    return get_config("agent_max_rounds", CONFIG_MAX_ROUNDS or 8)
+
+MAX_TOOL_ROUNDS = CONFIG_MAX_ROUNDS or 8  # Fallback for module-level access
+
+
+def _is_bulk_md_memory_sync_query(query: str) -> bool:
+    q = (query or "").lower()
+    has_linkedin = "/data/linkedin" in q
+    has_visualfox = "/data/visualfox" in q or "/data/visuafox" in q
+    wants_memory_update = (
+        ("update" in q and ("ged" in q or "memory" in q))
+        or "update your memory" in q
+    )
+    wants_markdown = "md file" in q or "*.md" in q or "markdown" in q
+    return has_linkedin and has_visualfox and wants_memory_update and wants_markdown
+
+
+def _run_bulk_md_memory_sync(
+    query: str,
+    namespace: str,
+    user_id: Optional[int],
+    session_id: Optional[str],
+    role: str,
+    persona_id: Optional[str],
+) -> Dict[str, Any]:
+    """Read all markdown files from data folders and persist condensed context in one deterministic flow."""
+    start_ts = time.time()
+    target_dirs = ["/data/linkedin", "/data/visualfox"]
+
+    all_tool_calls: List[Dict[str, Any]] = []
+    all_files: List[str] = []
+    dir_counts: Dict[str, int] = {}
+
+    for directory in target_dirs:
+        directory_result = execute_tool(
+            "read_project_file",
+            {"file_path": directory},
+            actor="jarvis",
+            reason="bulk_md_memory_sync_directory",
+            session_id=session_id,
+            domain=namespace,
+        )
+        all_tool_calls.append(
+            {
+                "tool": "read_project_file",
+                "input": {"file_path": directory},
+                "result_summary": "success" if directory_result.get("success") else "error",
+                "result": directory_result,
+            }
+        )
+
+        matched = directory_result.get("matched_files", []) if isinstance(directory_result, dict) else []
+        if isinstance(matched, list):
+            dir_counts[directory] = len(matched)
+            all_files.extend(matched)
+        else:
+            dir_counts[directory] = 0
+
+    # Stable dedupe while preserving order
+    seen = set()
+    unique_files: List[str] = []
+    for path in all_files:
+        if path not in seen:
+            seen.add(path)
+            unique_files.append(path)
+
+    contexts: List[Dict[str, Any]] = []
+    read_success = 0
+    read_errors = 0
+
+    for file_path in unique_files:
+        file_result = execute_tool(
+            "read_project_file",
+            {"file_path": file_path, "max_lines": 120},
+            actor="jarvis",
+            reason="bulk_md_memory_sync_file",
+            session_id=session_id,
+            domain=namespace,
+        )
+
+        all_tool_calls.append(
+            {
+                "tool": "read_project_file",
+                "input": {"file_path": file_path, "max_lines": 120},
+                "result_summary": "success" if file_result.get("success") else "error",
+                "result": file_result,
+            }
+        )
+
+        if not file_result.get("success"):
+            read_errors += 1
+            continue
+
+        read_success += 1
+        resolved_path = file_result.get("file_path", file_path)
+        content = file_result.get("content", "") or ""
+        preview = content[:3000]
+        key_slug = resolved_path.replace("/", "|")[-180:]
+        domain_label = "linkedin" if "/linkedin/" in resolved_path else "visualfox"
+
+        contexts.append(
+            {
+                "key": f"md_update:{domain_label}:{key_slug}",
+                "value": {
+                    "source_path": resolved_path,
+                    "domain": domain_label,
+                    "modified": file_result.get("modified"),
+                    "file_size": file_result.get("file_size"),
+                    "lines_read": file_result.get("lines_read"),
+                    "preview": preview,
+                },
+                "context_type": "knowledge_update",
+                "ttl_hours": 24 * 30,
+            }
+        )
+
+    batch_result = {"status": "skipped", "reason": "no_contexts"}
+    if contexts:
+        batch_result = execute_tool(
+            "store_contexts_batch",
+            {"contexts": contexts, "user_id": user_id},
+            actor="jarvis",
+            reason="bulk_md_memory_sync_store",
+            session_id=session_id,
+            domain=namespace,
+        )
+        all_tool_calls.append(
+            {
+                "tool": "store_contexts_batch",
+                "input": {"contexts_count": len(contexts)},
+                "result_summary": "success" if batch_result.get("status") == "batch_stored" else "error",
+                "result": batch_result,
+            }
+        )
+
+    # === Qdrant Ingestion: register sources + embed into vector DB ===
+    registered_count = 0
+    qdrant_results: Dict[str, Any] = {}
+    qdrant_error: Optional[str] = None
+
+    if contexts:
+        try:
+            from .services.knowledge_sources import add_knowledge_source as _add_ks
+            for item in contexts:
+                src_path = item["value"]["source_path"]
+                domain_label = item["value"]["domain"]
+                parts = src_path.split("/")
+                try:
+                    data_idx = parts.index("data")
+                    after_domain = parts[data_idx + 2:]  # parts after /data/<domain>/
+                    subdomain = after_domain[0] if len(after_domain) > 1 else None
+                except (ValueError, IndexError):
+                    subdomain = None
+                filename = parts[-1]
+                title = filename.replace(".md", "").replace("-", " ")
+                version = (item["value"].get("modified") or "")[:10] or "1.0"
+                reg = _add_ks(
+                    domain=domain_label,
+                    file_path=src_path,
+                    title=title,
+                    subdomain=subdomain,
+                    version=version,
+                )
+                if reg.get("success"):
+                    registered_count += 1
+        except Exception as e:
+            qdrant_error = f"register_error: {e}"
+
+        if not qdrant_error:
+            import concurrent.futures as _cf
+
+            def _run_domain_ingest(domain_label: str) -> list:
+                import asyncio as _aio
+                from .services.knowledge_ingestion import ingest_domain as _id
+                loop = _aio.new_event_loop()
+                try:
+                    return loop.run_until_complete(_id(domain_label))
+                finally:
+                    loop.close()
+
+            active_domains = sorted(set(c["value"]["domain"] for c in contexts))
+            for domain_label in active_domains:
+                try:
+                    with _cf.ThreadPoolExecutor(max_workers=1) as pool:
+                        ingest_res = pool.submit(_run_domain_ingest, domain_label).result(timeout=180)
+                        chunks = sum(r.get("chunks_created", 0) for r in ingest_res if r.get("status") == "ingested")
+                        docs_new = sum(1 for r in ingest_res if r.get("status") == "ingested")
+                        docs_unchanged = sum(1 for r in ingest_res if r.get("status") == "unchanged")
+                        errors = sum(1 for r in ingest_res if r.get("status") == "error")
+                        qdrant_results[domain_label] = {
+                            "docs_new": docs_new,
+                            "docs_unchanged": docs_unchanged,
+                            "chunks": chunks,
+                            "errors": errors,
+                        }
+                    all_tool_calls.append({
+                        "tool": "ingest_knowledge",
+                        "input": {"domain": domain_label},
+                        "result_summary": "success" if errors == 0 else "partial",
+                        "result": qdrant_results[domain_label],
+                    })
+                except Exception as e:
+                    qdrant_results[domain_label] = {"error": str(e)}
+                    all_tool_calls.append({
+                        "tool": "ingest_knowledge",
+                        "input": {"domain": domain_label},
+                        "result_summary": "error",
+                        "result": {"error": str(e)},
+                    })
+
+    elapsed_ms = int((time.time() - start_ts) * 1000)
+    stored_count = batch_result.get("success_count", 0) if isinstance(batch_result, dict) else 0
+
+    qdrant_lines = ""
+    for d, r in qdrant_results.items():
+        if "error" in r:
+            qdrant_lines += f"- Qdrant {d}: Fehler – {r['error'][:80]}\n"
+        else:
+                unchanged_note = f" ({r['docs_unchanged']} unverändert)" if r.get("docs_unchanged") else ""
+                qdrant_lines += f"- Qdrant {d}: {r['docs_new']} neu indexiert{unchanged_note}, {r['chunks']} neue Chunks\n"
+    if qdrant_error:
+        qdrant_lines += f"- Qdrant Registrierung: {qdrant_error[:100]}\n"
+
+    answer = (
+        "Knowledge-Update abgeschlossen (SQLite + Qdrant).\n\n"
+        f"- LinkedIn Dateien gefunden: {dir_counts.get('/data/linkedin', 0)}\n"
+        f"- VisualFox Dateien gefunden: {dir_counts.get('/data/visualfox', 0)}\n"
+        f"- Dateien gelesen: {read_success}, Fehler: {read_errors}\n"
+        f"- SQLite Context gespeichert: {stored_count}\n"
+        f"- Qdrant Sources registriert: {registered_count}\n"
+        + qdrant_lines
+    )
+
+    return {
+        "query": query,
+        "answer": answer,
+        "tool_calls": all_tool_calls,
+        "rounds": 1,
+        "model": "internal-bulk-sync",
+        "role": role,
+        "persona_id": persona_id,
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        },
+        "session_id": session_id,
+        "user_id": user_id,
+        "namespace": namespace,
+        "bulk_memory_sync": True,
+        "qdrant_registered": registered_count,
+        "qdrant_results": qdrant_results,
+        "elapsed_ms": elapsed_ms,
+    }
+
+
+def _build_cached_system_prompt(system_prompt: str, enable_cache: bool = True) -> list:
+    """
+    O3: Convert system prompt to cached content blocks.
+
+    Anthropic prompt caching saves up to 90% on input costs by caching
+    frequently used system prompts. Cache has 5-minute TTL.
+    """
+    if not enable_cache:
+        return system_prompt  # Return as string for non-cached calls
+
+    # Return as list of content blocks with cache_control
+    return [
+        {
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"}
+        }
+    ]
 
 
 @retry_with_backoff(max_retries=2, base_delay=1.0, exceptions=(anthropic.APIConnectionError, anthropic.RateLimitError))
@@ -430,18 +791,26 @@ def _call_claude(
     max_tokens: int,
     system_prompt: str = None,
     stream_callback: Any = None,
+    enable_prompt_cache: bool = True,
 ) -> anthropic.types.Message:
-    """Call Claude with retry logic and minimal Langfuse tracing"""
-    # Note: Langfuse v3.x decorator context isolation means nested @observe decorators
-    # don't automatically create child observations. Full nested LLM call tracing would
-    # require either SDK improvements or parent trace ID propagation (not currently available).
-    # For now, we focus on tracking via token counts in usage response.
-    
+    """
+    Call Claude with retry logic and prompt caching (O3).
+
+    O3 Prompt Caching:
+    - Converts system prompt to cached content blocks
+    - Saves up to 90% on input costs for repeated prompts
+    - 5-minute cache TTL on Anthropic's side
+    """
+    prompt = system_prompt or AGENT_SYSTEM_PROMPT
+
+    # O3: Build cached system prompt
+    system_param = _build_cached_system_prompt(prompt, enable_cache=enable_prompt_cache)
+
     if not stream_callback:
         response = client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=system_prompt or AGENT_SYSTEM_PROMPT,
+            system=system_param,
             tools=tools,
             messages=messages
         )
@@ -450,17 +819,36 @@ def _call_claude(
         with client.messages.stream(
             model=model,
             max_tokens=max_tokens,
-            system=system_prompt or AGENT_SYSTEM_PROMPT,
+            system=system_param,
             tools=tools,
             messages=messages,
         ) as stream:
             for chunk in stream.text_stream:
                 try:
                     stream_callback(chunk)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Stream callback failed (non-critical): {e}")
             response = stream.get_final_message()
-    
+
+    # O3: Log cache stats if available and export metrics
+    if hasattr(response, 'usage') and hasattr(response.usage, 'cache_creation_input_tokens'):
+        cache_created = getattr(response.usage, 'cache_creation_input_tokens', 0)
+        cache_read = getattr(response.usage, 'cache_read_input_tokens', 0)
+        if cache_created > 0 or cache_read > 0:
+            log_with_context(logger, "debug", "Anthropic prompt cache stats",
+                           cache_created=cache_created, cache_read=cache_read)
+            # Export to Prometheus
+            try:
+                from .prometheus_exporter import get_prometheus_exporter
+                exporter = get_prometheus_exporter()
+                if cache_read > 0:
+                    exporter.export_llm_cache_hit("anthropic_prompt")
+                    exporter.export_llm_tokens_saved("o3_prompt_cache", cache_read)
+                else:
+                    exporter.export_llm_cache_miss("anthropic_prompt")
+            except Exception:
+                pass
+
     return response
 
 
@@ -469,6 +857,7 @@ def run_agent(
     query: str,
     conversation_history: List[Dict[str, str]] = None,
     namespace: str = "work_projektil",
+    scope: Optional[ScopeRef] = None,
     model: str = "claude-sonnet-4-20250514",
     max_tokens: int = 1024,
     role: str = "assistant",
@@ -481,6 +870,8 @@ def run_agent(
     stream_callback: Any = None,
     timeout_seconds: Optional[int] = None,
     max_rounds: Optional[int] = None,
+    is_session_start: bool = False,  # Phase 20: Cross-session persistence
+    images: List[Dict[str, str]] = None,  # Vision support: [{"type": "base64", "media_type": "image/jpeg", "data": "..."}]
 ) -> Dict[str, Any]:
     """
     Run the agent loop for a query.
@@ -498,16 +889,22 @@ def run_agent(
         session_id: Current session ID
         include_context: Whether to include context from previous sessions
         include_explanation: Whether to include explanation of sources/confidence
+        is_session_start: True if this is the first message of a new session (Phase 20)
 
     Returns:
         Dict with 'answer', 'tool_calls', 'usage', 'role', 'persona_id', 'explanation' (if requested), etc.
     """
+    scope_was_explicit = scope is not None
+    if scope_was_explicit:
+        namespace = scope.to_legacy_namespace()
+    else:
+        scope = ScopeRef.from_legacy_namespace(namespace)
+
     start_time = time.time()
     timeout_hit = False
-    # Read max_rounds from config dynamically (not cached from import)
-    import os as os_module
-    max_rounds_env = int(os_module.getenv("JARVIS_AGENT_MAX_ROUNDS", "5"))
-    log_with_context(logger, "info", "DEBUG: max_rounds config", env_value=max_rounds_env, param_value=max_rounds)
+    # Read max_rounds from live config (allows runtime changes without deploy)
+    max_rounds_env = get_max_tool_rounds()
+    log_with_context(logger, "info", "DEBUG: max_rounds config", live_config_value=max_rounds_env, param_value=max_rounds)
     max_rounds_value = max_rounds if max_rounds is not None else max_rounds_env
 
     # Langfuse attribute propagation (best-effort; no-op if unsupported)
@@ -520,27 +917,48 @@ def run_agent(
             metadata={
                 "tool": "run_agent",
                 "namespace": namespace,
+                "scope_org": scope.org,
+                "scope_visibility": scope.visibility,
                 "model": model,
                 "role": role,
                 "include_context": include_context,
                 "include_explanation": include_explanation,
                 "query_length": len(query) if query else 0,
+                "is_session_start": is_session_start,  # Phase 20
             },
-            tags=["tool", "run_agent", role],
+            tags=["tool", "run_agent", role] + (["session_start"] if is_session_start else []),
             version=getattr(cfg, "VERSION", None),
             trace_name="run_agent",
             as_baggage=False,
         )
         attr_scope.__enter__()
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Langfuse attr_scope init failed (non-critical): {e}")
         attr_scope = None
 
     def _close_attr_scope():
         if attr_scope:
             try:
                 attr_scope.__exit__(None, None, None)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Langfuse attr_scope cleanup failed (non-critical): {e}")
+
+    def _finalize_reasoning():
+        """Finalize reasoning observation and clear observer."""
+        if _REASONING_OBSERVABILITY:
+            try:
+                from .services.reasoning_observer import get_current_observer, clear_current_observer
+                observer = get_current_observer()
+                if observer:
+                    trace = observer.finalize()
+                    log_with_context(logger, "info", "Reasoning trace completed",
+                                   depth=trace.depth,
+                                   confidence=f"{trace.overall_confidence:.2f}",
+                                   tools=len(trace.tool_selections),
+                                   flags=len(trace.hallucination_flags))
+                clear_current_observer()
+            except Exception as e:
+                logger.debug(f"Reasoning finalization failed (non-critical): {e}")
 
     # Phase 1.5: Initialize AgentState for centralized state management
     # Get request_id from tracing context for observability
@@ -558,7 +976,18 @@ def run_agent(
         max_rounds=max_rounds_value,
         request_id=trace_ctx.get('request_id')
     )
-    
+
+    # ========== REASONING OBSERVABILITY (Tier 1 Quick Win) ==========
+    reasoning_observer = None
+    if _REASONING_OBSERVABILITY:
+        try:
+            query_type = classify_query_for_reasoning(query, tool_count=0)
+            reasoning_observer = start_reasoning_observation(query, query_type)
+            log_with_context(logger, "debug", "Reasoning observation started",
+                           query_type=query_type)
+        except Exception as e:
+            log_with_context(logger, "debug", "Reasoning observation init failed", error=str(e))
+
     # ========== FAST-PATH CHECK (T-020 - Simple Query Fast-Path) ==========
     # Feb 3, 2026: Detect simple queries and bypass heavy context/tool loading
     # Expected: Simple queries <500ms, 94% token reduction, Haiku model
@@ -599,7 +1028,74 @@ def run_agent(
                         error=str(e), exc_info=True)
         from . import metrics as metrics_module
         metrics_module.record_fast_path_status("skipped")
+
+    # ========== BULK MD MEMORY SYNC FAST-PATH ==========
+    # Deterministic path for: "read all md files from /data/linkedin + /data/visualfox and update memory"
+    if _is_bulk_md_memory_sync_query(query):
+        log_with_context(logger, "info", "Bulk MD memory sync fast-path activated")
+        try:
+            response_data = _run_bulk_md_memory_sync(
+                query=query,
+                namespace=namespace,
+                user_id=user_id,
+                session_id=session_id,
+                role=role,
+                persona_id=persona_id,
+            )
+            _close_attr_scope()
+            return response_data
+        except Exception as e:
+            log_with_context(logger, "warning", "Bulk MD memory sync fast-path failed, falling back to normal flow", error=str(e))
     
+    # ========== MULTI-MODEL ROUTING (Phase 21 - OpenAI + Anthropic) ==========
+    # Database-driven model selection:
+    # - Default: cheapest model (gpt-4o-mini) for simple tasks
+    # - Task-aware: selects best model based on query type + complexity
+    # - Jarvis can override mappings via tools
+    DEFAULT_MODEL = "claude-sonnet-4-20250514"
+    original_model = model
+    selected_provider = Provider.ANTHROPIC  # Default provider
+    model_selection = None
+
+    multi_model_enabled = os.environ.get("MULTI_MODEL_ENABLED", "true").lower() == "true"
+
+    try:
+        if multi_model_enabled and model == DEFAULT_MODEL:
+            # Use dynamic router (reads patterns from database)
+            dynamic_router = get_dynamic_model_router()
+            # Force Anthropic provider - agent loop only supports Anthropic client
+            # OpenAI models can be used via dedicated tools for specific tasks
+            model_selection = dynamic_router.select_model(query, force_provider="anthropic")
+
+            model = model_selection.model_id
+            selected_provider = Provider(model_selection.provider.value)
+            state.model = model  # Update AgentState for response building
+
+            log_with_context(
+                logger, "info", "Dynamic model router: model selected",
+                original_model=original_model,
+                selected_model=model,
+                provider=selected_provider.value,
+                task_type=model_selection.task_type,
+                complexity=model_selection.complexity,
+                confidence=model_selection.confidence,
+                reason=model_selection.reason,
+                rules_applied=model_selection.rules_applied
+            )
+            metrics.inc(f"model_router_provider_{selected_provider.value}")
+            metrics.inc(f"model_router_task_{model_selection.task_type}")
+        else:
+            log_with_context(
+                logger, "debug", "Dynamic model router: bypassed",
+                model=model,
+                multi_model_enabled=multi_model_enabled,
+                is_default=model == DEFAULT_MODEL
+            )
+    except Exception as e:
+        # Don't fail the request if model routing fails
+        log_with_context(logger, "warning", "Dynamic model routing failed, using original model",
+                        model=model, error=str(e))
+
     # T-005 Phase 1: Facette Detection (Feb 3, 2026)
     try:
         from .facette_detector import get_facette_detector
@@ -650,8 +1146,8 @@ def run_agent(
                 },
                 tags=["tool", "run_agent", role],
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Langfuse context update failed (non-critical): {e}")
     else:
         try:
             from .langfuse_integration import get_langfuse
@@ -671,8 +1167,8 @@ def run_agent(
                     },
                     tags=["tool", "run_agent", role],
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Langfuse fallback update failed (non-critical): {e}")
 
     # Auto-detect role if enabled
     if auto_detect_role:
@@ -682,8 +1178,9 @@ def run_agent(
     role_config = get_role(role) or ROLES["assistant"]
 
     # Override namespace if role has a default
-    if role_config.default_namespace and namespace == "work_projektil":
+    if role_config.default_namespace and not scope_was_explicit and namespace == "work_projektil":
         namespace = role_config.default_namespace
+        scope = ScopeRef.from_legacy_namespace(namespace)
 
     # Build system prompt from role
     system_prompt = build_system_prompt(None, role_config)  # Will use role's prompt
@@ -739,8 +1236,8 @@ def run_agent(
             tool_names_preview=([] if not tool_names or tool_names is None else tool_names[:10])
         )
         
-        # Load full tool definitions
-        all_tools = get_tool_definitions()
+        # O5: Load tool definitions with caching
+        all_tools = get_cached_tool_definitions(get_tool_definitions)
         
         if tool_names is None:
             # Complex query: use all tools
@@ -773,10 +1270,76 @@ def run_agent(
             )
         
     except Exception as e:
-        # Fallback to all tools if selection fails
-        tools = get_tool_definitions()
+        # Fallback to all tools if selection fails (O5: with caching)
+        tools = get_cached_tool_definitions(get_tool_definitions)
         log_with_context(logger, "warning", "Tool selection failed, using all tools",
                         error=str(e))
+
+    # ========== DECISION RULES (Phase 19.6 - Tool Autonomy) ==========
+    # Apply database-driven decision rules to modify tool selection
+    try:
+        from .services.tool_autonomy import get_tool_autonomy_service
+        from datetime import datetime
+        try:
+            from zoneinfo import ZoneInfo
+        except ImportError:
+            from backports.zoneinfo import ZoneInfo
+
+        autonomy_service = get_tool_autonomy_service()
+        now = datetime.now(ZoneInfo("Europe/Zurich"))
+
+        # Build context for rule matching
+        rule_context = {
+            "query": query,
+            "user_id": user_id,
+            "source": source,
+            "time_of_day": now.strftime("%H:%M"),
+            "hour": now.hour,
+            "weekday": now.strftime("%A").lower(),
+            "query_class": query_class
+        }
+
+        # Get applicable rules
+        applicable_rules = autonomy_service.get_applicable_rules(rule_context)
+
+        if applicable_rules:
+            tool_names_set = {t['name'] for t in tools}
+
+            for rule in applicable_rules:
+                action_type = rule["action_type"]
+                action_value = rule["action_value"]
+
+                if action_type == "include_tools":
+                    # Add tools to selection
+                    tools_to_add = action_value if isinstance(action_value, list) else [action_value]
+                    for tool_name in tools_to_add:
+                        if tool_name not in tool_names_set:
+                            matching = [t for t in all_tools if t['name'] == tool_name]
+                            if matching:
+                                tools.append(matching[0])
+                                tool_names_set.add(tool_name)
+
+                elif action_type == "exclude_tools":
+                    # Remove tools from selection
+                    tools_to_remove = action_value if isinstance(action_value, list) else [action_value]
+                    tools = [t for t in tools if t['name'] not in tools_to_remove]
+                    tool_names_set = {t['name'] for t in tools}
+
+                elif action_type == "set_priority":
+                    # Reorder tools by moving specified ones to front
+                    priority_tools = action_value if isinstance(action_value, list) else [action_value]
+                    high_priority = [t for t in tools if t['name'] in priority_tools]
+                    others = [t for t in tools if t['name'] not in priority_tools]
+                    tools = high_priority + others
+
+            log_with_context(
+                logger, "info", "Decision rules applied",
+                rules_count=len(applicable_rules),
+                rule_names=[r["name"] for r in applicable_rules],
+                tools_after=len(tools)
+            )
+    except Exception as e:
+        log_with_context(logger, "debug", "Decision rules skipped", error=str(e))
 
     # Select which contexts to inject based on query
     from . import context_selector
@@ -807,6 +1370,293 @@ def run_agent(
     # Build context and get result
     context_result = context_builder.build()
     system_prompt = context_result.system_prompt
+
+    # === SPECIALIST AGENT DETECTION (Tier 3 #8) ===
+    # Detect if a specialist agent should handle this query
+    active_specialist = None
+    specialist_activation_id = None
+    try:
+        from .services.specialist_agent_service import get_specialist_agent_service
+
+        specialist_service = get_specialist_agent_service()
+        specialist_activation = specialist_service.detect_specialist(
+            query=query,
+            current_domain=namespace,
+            session_context={"role": role}
+        )
+
+        if specialist_activation.specialist and specialist_activation.confidence >= 0.5:
+            active_specialist = specialist_activation.specialist
+
+            # Record activation
+            specialist_activation_id = specialist_service.record_activation(
+                specialist=active_specialist,
+                session_id=session_id,
+                query=query,
+                trigger_type=specialist_activation.trigger_type,
+                trigger_value=specialist_activation.trigger_value,
+                confidence=specialist_activation.confidence
+            )
+
+            # Get specialist context
+            spec_context = specialist_service.get_specialist_context(
+                specialist=active_specialist,
+                query=query,
+                session_id=session_id
+            )
+
+            # Inject specialist persona into system prompt
+            specialist_block = f"""
+
+## Specialist Agent: {active_specialist.display_name}
+{active_specialist.persona_prompt}
+
+### Specialist Knowledge:
+"""
+            for k in spec_context.knowledge[:3]:
+                specialist_block += f"- {k['topic']}: {k['content']}\n"
+
+            if spec_context.memory:
+                specialist_block += "\n### Remembered Context:\n"
+                for m in spec_context.memory[:3]:
+                    specialist_block += f"- {m['type']}: {m['key']} = {m['value']}\n"
+
+            if spec_context.goals:
+                specialist_block += "\n### Active Goals:\n"
+                for g in spec_context.goals[:2]:
+                    specialist_block += f"- {g['title']} ({g['progress'] or 0}% complete)\n"
+
+            system_prompt = system_prompt + specialist_block
+
+            # Update AgentState with specialist info
+            state.specialist = active_specialist.name
+            state.specialist_display_name = active_specialist.display_name
+
+            log_with_context(logger, "info", "Specialist activated",
+                            specialist=active_specialist.display_name,
+                            trigger=specialist_activation.trigger_type,
+                            confidence=specialist_activation.confidence)
+
+    except Exception as e:
+        log_with_context(logger, "debug", "Specialist detection skipped", error=str(e))
+
+    # === CONTEXT ENGINE (Tier 3 #10) ===
+    # Build context profile for mood-aware responses
+    context_profile = None
+    try:
+        from .services.context_engine_service import get_context_engine_service
+
+        context_service = get_context_engine_service()
+        context_profile = context_service.build_context_profile(
+            user_id=str(user_id) if user_id else None,
+            session_id=session_id,
+            query=query
+        )
+
+        # Inject context-aware prompt adjustments
+        if context_profile.prompt_injection:
+            context_block = f"""
+
+## Context-Aware Guidance
+{context_profile.prompt_injection}
+"""
+            system_prompt = system_prompt + context_block
+
+        # Store context in state for later use
+        state.context_profile = context_profile
+
+        log_with_context(logger, "info", "Context profile built",
+                        mood=context_profile.primary_mood.value,
+                        energy=context_profile.energy_level,
+                        stress=context_profile.stress_level,
+                        tone=context_profile.recommended_tone)
+
+    except Exception as e:
+        log_with_context(logger, "debug", "Context engine skipped", error=str(e))
+
+    # === CROSS-SESSION CONTINUITY (Tier 3 #11) ===
+    # Restore context from previous sessions
+    session_context_restored = None
+    try:
+        from .services.cross_session_service import get_cross_session_service
+
+        cross_session = get_cross_session_service()
+
+        # Start session tracking
+        cross_session.start_session(
+            session_id=session_id,
+            user_id=str(user_id) if user_id else "1"
+        )
+
+        # Restore context from previous sessions
+        session_context_restored = cross_session.restore_session_context(
+            user_id=str(user_id) if user_id else "1",
+            session_id=session_id,
+            specialist=state.specialist
+        )
+
+        # Build and inject session recap
+        recap = cross_session.build_session_recap(session_context_restored)
+        if recap:
+            recap_block = f"""
+
+## Session Continuity
+{recap}
+"""
+            system_prompt = system_prompt + recap_block
+
+        # Log active threads for debugging
+        if session_context_restored.active_threads:
+            log_with_context(logger, "info", "Session context restored",
+                            threads=len(session_context_restored.active_threads),
+                            handoffs=len(session_context_restored.pending_handoffs),
+                            has_recap=recap is not None)
+
+    except Exception as e:
+        log_with_context(logger, "debug", "Cross-session continuity skipped", error=str(e))
+
+    # === RESPONSE STYLES (Phase 19.6 - Tool Autonomy) ===
+    # Apply database-driven response styles to customize Jarvis's tone and verbosity
+    try:
+        from .services.tool_autonomy import get_tool_autonomy_service
+        autonomy_service = get_tool_autonomy_service()
+
+        # Get default response style (or user-specific if configured)
+        response_style = autonomy_service.get_response_style()
+
+        if response_style and response_style.get("style_prompt"):
+            style_block = f"""
+
+## Response Style: {response_style['name']}
+{response_style['style_prompt']}
+- Ton: {response_style.get('tone', 'friendly')}
+- Detailgrad: {response_style.get('verbosity', 'balanced')}
+- Emojis: {response_style.get('emoji_level', 'sparse')}
+"""
+            system_prompt = system_prompt + style_block
+            log_with_context(logger, "debug", "Response style applied",
+                            style=response_style['name'])
+    except Exception as e:
+        log_with_context(logger, "debug", "Response style skipped", error=str(e))
+
+    # === PROMPT FRAGMENTS (Phase 19.6 - Tool Autonomy) ===
+    # Inject dynamic prompt fragments from database
+    try:
+        from .services.tool_autonomy import get_tool_autonomy_service
+        autonomy_service = get_tool_autonomy_service()
+
+        # Get all enabled fragments, sorted by priority
+        fragments = autonomy_service.get_prompt_fragments()
+
+        if fragments:
+            fragment_content = []
+            for frag in fragments:
+                # Check if fragment conditions match current context
+                conditions = frag.get("conditions", {})
+                if conditions:
+                    # Simple condition matching
+                    match = True
+                    if "role" in conditions and conditions["role"] != role:
+                        match = False
+                    if "source" in conditions and conditions["source"] != source:
+                        match = False
+                    if not match:
+                        continue
+
+                fragment_content.append(frag["content"])
+
+            if fragment_content:
+                fragments_block = "\n\n## Dynamic Context\n" + "\n\n".join(fragment_content)
+                system_prompt = system_prompt + fragments_block
+                log_with_context(logger, "debug", "Prompt fragments injected",
+                                count=len(fragment_content))
+    except Exception as e:
+        log_with_context(logger, "debug", "Prompt fragments skipped", error=str(e))
+
+    # === TOOL AWARENESS (Anti-Hallucination) ===
+    # Add explicit tool list to system prompt so LLM knows exactly what's available
+    # This prevents GPT-4o from inventing tool names it thinks might exist
+    if tools:
+        tool_names = sorted([t['name'] for t in tools])
+
+        # Identify key tool categories
+        self_improvement_tools = [t for t in tool_names if t in ['write_dynamic_tool', 'promote_sandbox_tool', 'system_pulse', 'list_available_tools']]
+        memory_tools = [t for t in tool_names if 'remember' in t or 'recall' in t or 'knowledge' in t]
+
+        tool_awareness_block = f"""
+
+## Verfuegbare Tools (EXAKT diese - keine anderen!)
+Du hast Zugriff auf {len(tool_names)} Tools.
+
+### ANTI-HALLUZINATION WARNUNG:
+- Tools wie `create_tool`, `manage_tool_registry`, `tool_performance_monitor` existieren NICHT!
+- Wenn du unsicher bist, nutze `list_available_tools` um verfuegbare Tools zu sehen
+- Erfinde KEINE Tool-Namen - rufe NUR existierende Tools auf
+
+### Self-Improvement Tools (fuer neue Tools erstellen):
+{', '.join(self_improvement_tools) if self_improvement_tools else 'Keine geladen'}
+→ Nutze `write_dynamic_tool` um neue Tools zu erstellen!
+
+### Memory Tools:
+{', '.join(memory_tools[:5])}
+
+### Alle Tools ({len(tool_names)}):
+{', '.join(tool_names[:30])}{'...' if len(tool_names) > 30 else ''}
+
+### Step-Management:
+- Bei komplexen Tasks: ERST planen, DANN ausfuehren
+- Nicht unnoetig Tools aufrufen die nichts beitragen
+- Wenn Step-Limit droht: Task aufteilen und User informieren
+"""
+        system_prompt = system_prompt + tool_awareness_block
+        log_with_context(logger, "debug", "Tool awareness block added",
+                        tool_count=len(tool_names),
+                        self_improvement_tools=len(self_improvement_tools))
+
+    # === SELF-KNOWLEDGE QUERY ===
+    # Query Jarvis's self-knowledge before responding
+    # This helps Jarvis know which tools to use for specific queries
+    try:
+        from .services.self_knowledge import query_before_response
+        self_knowledge_context = query_before_response(query)
+        if self_knowledge_context:
+            system_prompt = system_prompt + f"""
+
+## Relevantes Self-Knowledge
+{self_knowledge_context}
+"""
+            log_with_context(logger, "debug", "Self-knowledge context added",
+                            context_length=len(self_knowledge_context))
+    except Exception as e:
+        # Don't fail if self-knowledge query fails
+        log_with_context(logger, "warning", "Self-knowledge query failed",
+                        error=str(e))
+
+    # === SKILL CONTEXT (Phase 20 - Workflow Skills) ===
+    # Check if a workflow skill matches this query and inject its instructions
+    try:
+        from .prompt_assembler import get_skill_context_for_query
+        skill_context = get_skill_context_for_query(query)
+        if skill_context:
+            system_prompt = system_prompt + skill_context
+            log_with_context(logger, "info", "Skill context injected",
+                            query_preview=query[:50])
+    except Exception as e:
+        # Don't fail if skill lookup fails
+        log_with_context(logger, "warning", "Skill context lookup failed",
+                        error=str(e))
+
+    # === AUTO-LEARNING HINTS (Phase 19.5) ===
+    # Add hints from learned patterns to help tool selection
+    try:
+        from .services.auto_learner import get_prompt_hints
+        learning_hints = get_prompt_hints(query)
+        if learning_hints:
+            system_prompt = system_prompt + learning_hints
+            log_with_context(logger, "debug", "Auto-learning hints added",
+                            hints_length=len(learning_hints))
+    except Exception as e:
+        log_with_context(logger, "debug", "Auto-learning hints failed", error=str(e))
 
     # Handle role override from context (e.g., auto-coach mode)
     if context_result.role_override:
@@ -839,8 +1689,46 @@ def run_agent(
                 "content": content
             })
 
-    # Add current query
-    messages.append({"role": "user", "content": query})
+    # Add current query (with optional images for vision)
+    if images:
+        # Vision mode: content is an array with text and images
+        content_parts = [{"type": "text", "text": query}]
+        for img in images:
+            if img.get("type") == "base64" and img.get("data"):
+                content_parts.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.get("media_type", "image/jpeg"),
+                        "data": img["data"]
+                    }
+                })
+        messages.append({"role": "user", "content": content_parts})
+        log_with_context(logger, "info", "Vision mode: images attached", image_count=len(images))
+    else:
+        messages.append({"role": "user", "content": query})
+
+    # ========== O6: CONTEXT WINDOW OPTIMIZATION ==========
+    # Smart truncation for long conversations
+    messages, context_stats = optimize_context_window(
+        messages=messages,
+        system_prompt=system_prompt,
+        tool_definitions=tools
+    )
+    if context_stats.get("truncated"):
+        log_with_context(logger, "info", "O6: Context window optimized",
+                        original_msgs=context_stats.get("total_messages", 0),
+                        kept_msgs=context_stats.get("kept_messages", 0),
+                        summarized=context_stats.get("summarized", False),
+                        original_tokens=context_stats.get("original_tokens", 0),
+                        final_tokens=context_stats.get("final_tokens", 0))
+
+    # ========== O4: STREAMING OPTIMIZATION ==========
+    # Buffered streaming for smoother output
+    stream_finish_fn = None
+    if stream_callback:
+        optimized_callback, stream_finish_fn = create_optimized_stream_callback(stream_callback)
+        stream_callback = optimized_callback
 
     # Track tool usage
     all_tool_calls = []
@@ -848,16 +1736,35 @@ def run_agent(
     total_output_tokens = 0
 
     # Phase 1.5: Create ToolExecutor for tool execution
+    # Phase 21A: Added session_id for tool chain tracking
     tool_executor = ToolExecutor(
         user_id=user_id,
         query=query,
-        on_loop_alert=_send_tool_loop_alert
+        on_loop_alert=_send_tool_loop_alert,
+        session_id=session_id
     )
 
     # Agent loop
     for round_num in range(max_rounds_value):
         # Phase 1.5: Track round in AgentState
         state.round_num = round_num
+
+        # ========== SOFT CHECKPOINTS (Phase 19.5 - Ouroboros Pattern) ==========
+        # Inject warnings at 50% and 75% to help LLM plan better
+        rounds_remaining = max_rounds_value - round_num
+        if round_num > 0 and rounds_remaining <= max_rounds_value * 0.25:
+            # 75% used - critical warning
+            checkpoint_msg = f"⚠️ WARNUNG: Nur noch {rounds_remaining} Runden übrig! Bitte: (1) Task jetzt abschliessen, (2) Falls nicht möglich: Teilergebnis liefern und Fortsetzung vorschlagen."
+            messages.append({"role": "user", "content": f"[SYSTEM CHECKPOINT] {checkpoint_msg}"})
+            log_with_context(logger, "warning", "Soft checkpoint: 75% rounds used",
+                           round=round_num, remaining=rounds_remaining)
+        elif round_num > 0 and rounds_remaining <= max_rounds_value * 0.5:
+            # 50% used - advisory
+            if round_num == int(max_rounds_value * 0.5):  # Only inject once
+                checkpoint_msg = f"📊 INFO: {round_num}/{max_rounds_value} Runden verbraucht. Bei komplexen Tasks: Teilergebnisse sichern und priorisieren."
+                messages.append({"role": "user", "content": f"[SYSTEM CHECKPOINT] {checkpoint_msg}"})
+                log_with_context(logger, "info", "Soft checkpoint: 50% rounds used",
+                               round=round_num, remaining=rounds_remaining)
 
         if timeout_seconds is not None and (time.time() - start_time) > timeout_seconds:
             timeout_hit = True
@@ -895,10 +1802,44 @@ def run_agent(
             metrics.inc("agent_tokens_in", total_input_tokens)
             metrics.inc("agent_tokens_out", total_output_tokens)
 
+            # Phase 21: Record cost to database
+            if _TRACK_COSTS:
+                try:
+                    record_api_cost(
+                        model=model,
+                        provider="anthropic",
+                        feature="agent",
+                        tokens_in=total_input_tokens,
+                        tokens_out=total_output_tokens,
+                        session_id=session_id,
+                        user_id=str(user_id) if user_id else None,
+                        namespace=namespace,
+                        latency_ms=int(duration_ms),
+                        success=True
+                    )
+                except Exception as cost_err:
+                    logger.debug(f"Cost tracking failed: {cost_err}")
+
+            # O4: Finish streaming and log metrics
+            if stream_finish_fn:
+                stream_stats = stream_finish_fn()
+                if stream_stats.get("total_chars", 0) > 0:
+                    log_with_context(logger, "debug", "O4: Streaming completed",
+                                   chars=stream_stats.get("total_chars", 0),
+                                   chunks=stream_stats.get("chunk_count", 0),
+                                   chars_per_sec=stream_stats.get("chars_per_second", 0))
+
             log_with_context(logger, "info", "Agent completed",
                            rounds=round_num + 1,
                            tool_calls=len(all_tool_calls),
                            latency_ms=round(duration_ms, 1))
+
+            # Phase 21A: Finish tool chain tracking
+            if len(all_tool_calls) > 0:
+                chain_result = tool_executor.finish_chain(success=True)
+                if chain_result.get("saved"):
+                    log_with_context(logger, "debug", "Tool chain saved",
+                                   chain_length=len(chain_result.get("chain", [])))
 
             # Build response from AgentState (includes facette info)
             response_data = state.to_response_dict()
@@ -958,6 +1899,97 @@ def run_agent(
             except Exception as e:
                 logger.warning(f"Failed to save session snapshot: {e}")
 
+            # Track value created (ClawWork economic accountability) - end_turn path
+            try:
+                from .services.economic_engine import get_economic_engine, ValueType, CostType
+                engine = get_economic_engine()
+
+                # Track value (no tools = simple complexity)
+                engine.record_value(
+                    value_type=ValueType.TASK_COMPLETION,
+                    feature="agent",
+                    user_id=str(user_id) if user_id else "system",
+                    description=query[:100],
+                    complexity="simple" if not all_tool_calls else "medium",
+                    confidence=0.8,
+                )
+
+                # Track cost from usage
+                usage = response_data.get("usage", {})
+                in_tokens = usage.get("input_tokens", 0)
+                out_tokens = usage.get("output_tokens", 0)
+                if in_tokens or out_tokens:
+                    cost_usd = (in_tokens * 0.003 + out_tokens * 0.015) / 1000
+                    engine.record_cost(
+                        cost_type=CostType.LLM_TOKENS,
+                        amount_usd=cost_usd,
+                        feature="agent",
+                        user_id=str(user_id) if user_id else "system",
+                        description=f"agent: {in_tokens} in, {out_tokens} out",
+                    )
+            except Exception as track_err:
+                log_with_context(logger, "debug", "Economic tracking failed (end_turn)", error=str(track_err))
+
+            # ============ PHASE 19.5: AUTO-LEARNING ============
+            # Extract and store learnings from this session
+            try:
+                from .services.auto_learner import extract_learning_from_session
+                learnings = extract_learning_from_session(
+                    query=query,
+                    tool_calls=all_tool_calls,
+                    final_answer=response_data.get("answer", ""),
+                    success=True  # end_turn means successful completion
+                )
+                if learnings.get("tool_usage_logged", 0) > 0:
+                    log_with_context(logger, "debug", "Auto-learning completed",
+                                   tools_logged=learnings["tool_usage_logged"],
+                                   patterns=learnings["patterns_stored"],
+                                   facts=learnings["facts_stored"])
+            except Exception as learn_err:
+                log_with_context(logger, "debug", "Auto-learning failed", error=str(learn_err))
+
+            # ============ PHASE A1: SELF-REFLECTION (AGI) ============
+            # Run reflection loop to evaluate and improve
+            try:
+                from .services.reflection_service import get_reflection_service
+                reflection_service = get_reflection_service()
+                reflection_result = reflection_service.run_reflection_loop(
+                    query=query,
+                    response=response_data.get("answer", ""),
+                    tool_calls=all_tool_calls,
+                    session_id=state.session_id if state else None,
+                    auto_extract=True
+                )
+                if reflection_result.get("reflection"):
+                    log_with_context(logger, "debug", "Self-reflection completed",
+                                   quality=reflection_result.get("evaluation", {}).get("quality_score"),
+                                   needs_improvement=bool(reflection_result.get("reflection", {}).get("needs_action")))
+            except Exception as reflect_err:
+                log_with_context(logger, "debug", "Self-reflection failed", error=str(reflect_err))
+
+            # ============ PHASE A2: UNCERTAINTY QUANTIFICATION (AGI) ============
+            # Assess confidence in the response
+            try:
+                from .services.uncertainty_service import get_uncertainty_service
+                uncertainty_service = get_uncertainty_service()
+                confidence_result = uncertainty_service.assess_confidence(
+                    query=query,
+                    response=response_data.get("answer", ""),
+                    tool_calls=all_tool_calls,
+                    session_id=state.session_id if state else None
+                )
+                if confidence_result.get("success"):
+                    response_data["confidence"] = confidence_result.get("overall_confidence")
+                    response_data["confidence_category"] = confidence_result.get("confidence_category")
+                    if confidence_result.get("should_express_uncertainty"):
+                        response_data["uncertainty_disclaimer"] = confidence_result.get("suggested_disclaimer")
+                    log_with_context(logger, "debug", "Uncertainty assessment completed",
+                                   confidence=confidence_result.get("overall_confidence"),
+                                   category=confidence_result.get("confidence_category"))
+            except Exception as uncertainty_err:
+                log_with_context(logger, "debug", "Uncertainty assessment failed", error=str(uncertainty_err))
+
+            _finalize_reasoning()
             _close_attr_scope()
             return response_data
 
@@ -985,10 +2017,19 @@ def run_agent(
             log_with_context(logger, "warning", f"Unexpected stop reason: {response.stop_reason}")
             break
 
+    # O4: Finish streaming on early exit
+    if stream_finish_fn:
+        try:
+            stream_finish_fn()
+        except Exception:
+            pass
+
     # If we hit timeout, return what we have
     duration_ms = (time.time() - start_time) * 1000
     if timeout_hit:
         metrics.inc("agent_timeout")
+        # Phase 21A: Finish chain with failure
+        tool_executor.finish_chain(success=False)
         response_data = {
             "answer": "I apologize, but I wasn't able to complete the task within the allowed time. Please try rephrasing your question.",
             "tool_calls": all_tool_calls,
@@ -1023,9 +2064,10 @@ def run_agent(
                     decision_category="timeout",
                     confidence=confidence
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Decision logging failed (non-critical): {e}")
 
+        _finalize_reasoning()
         _close_attr_scope()
         return response_data
 
@@ -1048,26 +2090,57 @@ def run_agent(
         for tool, count in tools_used.items():
             summary_parts.append(f"- {tool} ({count}x)")
         
-        # Extract key findings from tool results
+        # Extract key findings from tool results - smarter formatting
         key_findings = []
         for tc in all_tool_calls[:5]:  # Show first 5 results
             result = tc.get("result", "")
             result_summary = tc.get("result_summary", "")
-            
+            tool_name = tc.get("tool", "")
+
+            # Check for summary field in result (e.g., get_learnings)
+            if isinstance(result, dict):
+                if "summary" in result:
+                    key_findings.append(f"- {result['summary'][:500]}")
+                    continue
+                elif "answer" in result:
+                    key_findings.append(f"- {result['answer'][:300]}")
+                    continue
+                elif "count" in result and "learnings" in result:
+                    # get_learnings result - format nicely
+                    learnings = result.get("learnings", [])
+                    facts = [l.get("fact", "") for l in learnings[:5] if l.get("fact")]
+                    if facts:
+                        key_findings.append(f"- **Learnings ({result['count']}):** " + "; ".join(facts[:3]))
+                    continue
+
             if result_summary and len(result_summary) > 10:
                 key_findings.append(f"- {result_summary[:200]}")
             elif result and len(str(result)) > 20:
-                # Truncate result if too long
-                result_str = str(result)[:200]
-                key_findings.append(f"- {result_str}...")
-        
+                # Truncate result if too long - but avoid raw JSON
+                result_str = str(result)
+                if not result_str.startswith("{") and not result_str.startswith("["):
+                    key_findings.append(f"- {result_str[:200]}...")
+
         if key_findings:
             summary_parts.append("\n\n**Key findings:**")
             summary_parts.extend(key_findings)
-        
-        summary_parts.append("\n\nPlease try asking a more specific question or breaking this into smaller requests.")
+
+        # Better guidance based on what was attempted
+        summary_parts.append("\n\n---")
+        summary_parts.append("**💡 Wie weiter?**")
+        if any("write_dynamic_tool" in tc.get("tool", "") for tc in all_tool_calls):
+            summary_parts.append("- Tool-Erstellung: Bitte EIN Tool pro Anfrage erstellen, nicht mehrere gleichzeitig")
+            summary_parts.append("- Syntax: Verwende `code` Parameter mit vollständigem Python-Code")
+        else:
+            summary_parts.append("- Komplexe Aufgabe in Teilschritte aufteilen")
+            summary_parts.append("- Spezifischere Frage stellen")
+            summary_parts.append("- Teilergebnis akzeptieren und mit Folgefrage fortsetzen")
     else:
-        summary_parts.append("I wasn't able to complete the task within the allowed steps. Please try rephrasing your question or breaking it into smaller parts.")
+        summary_parts.append("Die Aufgabe konnte nicht abgeschlossen werden.")
+        summary_parts.append("\n**💡 Vorschläge:**")
+        summary_parts.append("- Frage spezifischer formulieren")
+        summary_parts.append("- In kleinere Teilaufgaben aufteilen")
+        summary_parts.append("- Mit 'was hast du bisher?' Zwischenergebnisse abfragen")
     
     answer_text = "\n".join(summary_parts)
 
@@ -1084,6 +2157,63 @@ def run_agent(
         },
         "max_rounds_hit": True
     }
+
+    # ============ PHASE 19.5: AUTO-LEARNING (even on max_rounds) ============
+    # Extract learnings even when we hit limits - partial success is still valuable
+    try:
+        from .services.auto_learner import extract_learning_from_session
+        learnings = extract_learning_from_session(
+            query=query,
+            tool_calls=all_tool_calls,
+            final_answer=answer_text,
+            success=False  # Mark as partial completion
+        )
+        if learnings.get("tool_usage_logged", 0) > 0:
+            log_with_context(logger, "debug", "Auto-learning (max_rounds)",
+                           tools_logged=learnings["tool_usage_logged"],
+                           patterns=learnings["patterns_stored"])
+    except Exception as learning_err:
+        log_with_context(logger, "debug", "Auto-learning skipped (max_rounds)",
+                        error=str(learning_err))
+
+    # ============ PHASE A1: SELF-REFLECTION (max_rounds) ============
+    # Reflect on why we hit limits - important learning opportunity
+    try:
+        from .services.reflection_service import get_reflection_service
+        reflection_service = get_reflection_service()
+        reflection_result = reflection_service.run_reflection_loop(
+            query=query,
+            response=answer_text,
+            tool_calls=all_tool_calls,
+            session_id=state.session_id if state else None,
+            context={"max_rounds_hit": True}
+        )
+        if reflection_result.get("success"):
+            log_with_context(logger, "debug", "Self-reflection (max_rounds)",
+                           quality=reflection_result.get("evaluation", {}).get("quality_score"))
+    except Exception as reflect_err:
+        log_with_context(logger, "debug", "Self-reflection skipped (max_rounds)",
+                        error=str(reflect_err))
+
+    # ============ PHASE A2: UNCERTAINTY QUANTIFICATION (max_rounds) ============
+    try:
+        from .services.uncertainty_service import get_uncertainty_service
+        uncertainty_service = get_uncertainty_service()
+        confidence_result = uncertainty_service.assess_confidence(
+            query=query,
+            response=answer_text,
+            tool_calls=all_tool_calls,
+            session_id=state.session_id if state else None,
+            context={"max_rounds_hit": True}
+        )
+        if confidence_result.get("success"):
+            response_data["confidence"] = confidence_result.get("overall_confidence")
+            response_data["confidence_category"] = confidence_result.get("confidence_category")
+            log_with_context(logger, "debug", "Uncertainty assessment (max_rounds)",
+                           confidence=confidence_result.get("overall_confidence"))
+    except Exception as uncertainty_err:
+        log_with_context(logger, "debug", "Uncertainty assessment skipped (max_rounds)",
+                        error=str(uncertainty_err))
 
     # Add explanation if requested
     if include_explanation:
@@ -1138,6 +2268,37 @@ def run_agent(
             log_with_context(logger, "warning", "Failed to log decision for cross-session learning",
                            error=str(e))
 
+    # Track value created (ClawWork economic accountability)
+    log_with_context(logger, "debug", "Starting economic value tracking")
+    try:
+        from .services.economic_engine import get_economic_engine, ValueType
+        engine = get_economic_engine()
+
+        # Estimate complexity based on response and tools used
+        answer = response_data.get("answer", "")
+        tools_used = response_data.get("tool_calls", [])
+
+        if len(tools_used) > 2:
+            complexity = "complex"
+        elif len(tools_used) > 0 or len(answer) > 500:
+            complexity = "medium"
+        else:
+            complexity = "simple"
+
+        engine.record_value(
+            value_type=ValueType.TASK_COMPLETION,
+            feature="agent",
+            user_id=user_id,
+            description=query[:100],
+            complexity=complexity,
+            confidence=0.8,
+        )
+        log_with_context(logger, "info", "Economic value tracked",
+                        complexity=complexity, user_id=user_id)
+    except Exception as e:
+        log_with_context(logger, "warning", "Economic tracking failed", error=str(e))
+
+    _finalize_reasoning()
     _close_attr_scope()
     return response_data
 
@@ -1240,6 +2401,35 @@ def _run_simple_query(
             model=model
         )
         
+        # Track value and cost (ClawWork economic accountability)
+        try:
+            from .services.economic_engine import get_economic_engine, ValueType, CostType
+            engine = get_economic_engine()
+
+            # Track value created (simple query = simple complexity)
+            engine.record_value(
+                value_type=ValueType.TASK_COMPLETION,
+                feature="fast_path",
+                user_id=str(user_id) if user_id else "system",
+                description=query[:100],
+                complexity="simple",
+                confidence=0.8,
+            )
+
+            # Track cost
+            cost_usd = (response.usage.input_tokens * 0.00025 + response.usage.output_tokens * 0.00125) / 1000
+            engine.record_cost(
+                cost_type=CostType.LLM_TOKENS,
+                amount_usd=cost_usd,
+                feature="fast_path",
+                user_id=str(user_id) if user_id else "system",
+                description=f"{model}: {response.usage.input_tokens} in, {response.usage.output_tokens} out",
+            )
+            log_with_context(logger, "debug", "Fast-path economic tracking done",
+                           value_usd=0.4, cost_usd=cost_usd)
+        except Exception as track_err:
+            log_with_context(logger, "debug", "Fast-path economic tracking failed", error=str(track_err))
+
         # Return response in standard format
         return {
             "query": query,
@@ -1260,7 +2450,7 @@ def _run_simple_query(
             "fast_path": True,
             "elapsed_ms": elapsed_ms,
         }
-    
+
     except Exception as e:
         log_with_context(
             logger, "error", "Fast-path failed, falling back to normal flow",
