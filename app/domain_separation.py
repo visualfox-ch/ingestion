@@ -207,16 +207,32 @@ def require_namespace(namespace: str) -> None:
 
 
 def check_llm_allowed(namespace: str) -> bool:
-    """Check if LLM access is allowed for this namespace"""
+    """Check if LLM access is allowed for this namespace.
+
+    Reads from DB-driven scope_policy (via get_scope_policy) when possible;
+    falls back to hardcoded NAMESPACES dict for unknown namespaces.
+    """
     if namespace not in NAMESPACES:
         return False
+    from .models import _NAMESPACE_TO_SCOPE
+    org, visibility = _NAMESPACE_TO_SCOPE.get(namespace, (None, None))
+    if org and visibility:
+        return get_scope_policy(org, visibility).get("llm_allowed", True)
     return NAMESPACES[namespace]["llm_allowed"]
 
 
 def get_allowed_collections(namespace: str) -> List[str]:
-    """Get the vector/search collections allowed for this namespace"""
+    """Get the vector/search collections allowed for this namespace.
+
+    Reads from DB-driven scope_policy (via get_scope_policy) when possible;
+    falls back to hardcoded NAMESPACES dict for unknown namespaces.
+    """
     if namespace not in NAMESPACES:
         return []
+    from .models import _NAMESPACE_TO_SCOPE
+    org, visibility = _NAMESPACE_TO_SCOPE.get(namespace, (None, None))
+    if org and visibility:
+        return get_scope_policy(org, visibility).get("qdrant_collections", [])
     return NAMESPACES[namespace]["collections"]
 
 
