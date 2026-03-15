@@ -120,9 +120,7 @@ def call_jarvis_agent(
     namespace: Optional[str] = None,
     role: str = "assistant",
     user_id: int = None,
-    source: str = "telegram",
-    is_session_start: bool = False,
-    images: List[Dict[str, str]] = None  # Vision support
+    source: str = "telegram"
 ) -> Dict[str, Any]:
     """Call Jarvis agent API"""
     try:
@@ -132,14 +130,11 @@ def call_jarvis_agent(
             "role": role,
             "auto_detect_role": role == "auto",
             "source": source,
-            "is_session_start": is_session_start,  # Phase 20: Cross-session persistence
         }
         if namespace is not None and str(namespace).strip():
             payload["namespace"] = namespace
         if user_id:
             payload["user_id"] = str(user_id)  # AgentRequest expects string
-        if images:
-            payload["images"] = images  # Vision support
 
         resp = requests.post(
             f"{JARVIS_API_BASE}/agent",
@@ -222,8 +217,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"`/export` `/generate`\n\n"
         f"*🧠 Emotional*\n"
         f"`/compass` `/whatif` `/trust` `/flags` `/blindspot` `/energy`\n\n"
-        f"*🎤 Voice*\n"
-        f"`/voice` - Spracheinstellungen (on/off/auto)\n\n"
         f"*🔍 System*\n"
         f"`/self` `/feedback` `/projects`\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -764,89 +757,6 @@ async def patterns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ============ Learning Commands ============
-
-async def memory_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handle /memory command - show memory health and learning stats.
-
-    Usage:
-    /memory - Show memory health report
-    /memory consolidate - Run memory consolidation now
-    /memory patterns - Detect cross-session patterns
-    """
-    user = update.effective_user
-    if not is_allowed(user.id):
-        return
-
-    from .services.memory_lifecycle import get_memory_lifecycle_service
-    lifecycle = get_memory_lifecycle_service()
-
-    args = context.args if context.args else []
-
-    if args and args[0] == "consolidate":
-        await update.message.reply_text("Running memory consolidation...")
-        stats = lifecycle.consolidate_memory(days_to_keep=30)
-        response = "*Memory Consolidation Complete*\n\n"
-        response += f"Messages archived: {stats['messages_archived']}\n"
-        response += f"Topics merged: {stats['topics_merged']}\n"
-        response += f"Actions cleaned: {stats['actions_cleaned']}\n"
-        if stats.get('errors'):
-            response += f"\nErrors: {len(stats['errors'])}"
-        await update.message.reply_text(response, parse_mode="Markdown")
-        return
-
-    if args and args[0] == "patterns":
-        await update.message.reply_text("Detecting cross-session patterns...")
-        patterns = lifecycle.detect_cross_session_patterns(user_id=user.id, days_back=30)
-        if not patterns:
-            await update.message.reply_text("No significant patterns detected in the last 30 days.")
-            return
-        response = "*Cross-Session Patterns*\n\n"
-        for p in patterns[:5]:
-            response += f"*{p['category']}*: {p['mention_count']} mentions\n"
-            response += f"  Keywords: {', '.join(p['keywords_found'][:3])}\n"
-            response += f"  Confidence: {p['confidence']:.1%}\n\n"
-        await update.message.reply_text(response, parse_mode="Markdown")
-        return
-
-    # Default: show health report
-    report = lifecycle.get_memory_health_report(user_id=user.id)
-
-    response = "*Memory Health Report*\n\n"
-
-    # Session messages
-    sm = report.get("session_messages", {})
-    response += f"*Session Messages:* {sm.get('total', 0)} total\n"
-    response += f"  Sessions: {sm.get('sessions', 0)}\n"
-    if sm.get('newest'):
-        response += f"  Latest: {sm['newest'][:16]}\n"
-
-    # Topics
-    tm = report.get("topic_mentions", {})
-    response += f"\n*Topics:* {tm.get('total_topics', 0)} unique\n"
-    response += f"  Total mentions: {tm.get('total_mentions', 0)}\n"
-
-    # Actions
-    pa = report.get("pending_actions", {})
-    response += f"\n*Actions:* {pa.get('pending', 0)} pending, {pa.get('completed', 0)} completed\n"
-
-    # Learning
-    learn = report.get("learning", {})
-    if not learn.get("error"):
-        response += f"\n*Learning (30 days):*\n"
-        response += f"  Suggestions: {learn.get('total_suggestions', 0)}\n"
-        response += f"  Outcomes recorded: {learn.get('outcomes_recorded', 0)}\n"
-        response += f"  Effectiveness: {learn.get('effectiveness_rate', 0)}%\n"
-
-    # Jobs
-    response += f"\n*Background Jobs:* {'✅ Running' if report.get('background_jobs_running') else '❌ Stopped'}\n"
-    if report.get('last_consolidation'):
-        response += f"  Last consolidation: {report['last_consolidation'][:16]}\n"
-
-    response += "\n_Commands: /memory consolidate, /memory patterns_"
-
-    await update.message.reply_text(response, parse_mode="Markdown")
-
 
 async def remember(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -1809,260 +1719,6 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-# ============ U1: Tool Discovery Commands ============
-
-async def capabilities_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handle /capabilities command - discover what Jarvis can do.
-
-    Usage:
-    /capabilities - Show all tool categories with counts
-    /capabilities <category> - Show tools in a category
-    /capabilities search <term> - Search for tools
-    """
-    user = update.effective_user
-    if not is_allowed(user.id):
-        return
-
-    from .tools import TOOL_DEFINITIONS
-    from .prompt_assembler import get_tool_categories
-
-    args = context.args if context.args else []
-
-    # Get tool categories from prompt_assembler
-    try:
-        tool_categories = get_tool_categories()
-    except Exception:
-        tool_categories = {}
-
-    # Build category → tools mapping
-    category_tools = {}
-    uncategorized = []
-
-    for tool_def in TOOL_DEFINITIONS:
-        tool_name = tool_def.get("name", "unknown")
-        tool_cat = tool_def.get("category", "general")
-
-        if tool_cat not in category_tools:
-            category_tools[tool_cat] = []
-        category_tools[tool_cat].append({
-            "name": tool_name,
-            "description": tool_def.get("description", "")[:80]
-        })
-
-    # Handle search
-    if args and args[0].lower() == "search" and len(args) > 1:
-        search_term = " ".join(args[1:]).lower()
-        matches = []
-        for tool_def in TOOL_DEFINITIONS:
-            name = tool_def.get("name", "")
-            desc = tool_def.get("description", "")
-            if search_term in name.lower() or search_term in desc.lower():
-                matches.append({
-                    "name": name,
-                    "category": tool_def.get("category", "general"),
-                    "description": desc[:100]
-                })
-
-        if not matches:
-            await update.message.reply_text(f"Keine Tools gefunden für: *{search_term}*", parse_mode="Markdown")
-            return
-
-        response = f"*Tool-Suche: {search_term}*\n\n"
-        response += f"Gefunden: {len(matches)} Tools\n\n"
-        for m in matches[:15]:
-            response += f"• `{m['name']}` ({m['category']})\n  _{m['description']}_\n\n"
-        if len(matches) > 15:
-            response += f"_...und {len(matches) - 15} weitere_"
-        await update.message.reply_text(response, parse_mode="Markdown")
-        return
-
-    # Handle specific category
-    if args:
-        cat_name = args[0].lower()
-        matching_cat = None
-        for cat in category_tools.keys():
-            if cat.lower() == cat_name or cat.lower().startswith(cat_name):
-                matching_cat = cat
-                break
-
-        if matching_cat:
-            tools = category_tools[matching_cat]
-            response = f"*Kategorie: {matching_cat}*\n\n"
-            response += f"Tools: {len(tools)}\n\n"
-            for t in tools[:20]:
-                response += f"• `{t['name']}`\n  _{t['description']}_\n\n"
-            if len(tools) > 20:
-                response += f"_...und {len(tools) - 20} weitere_"
-            await update.message.reply_text(response, parse_mode="Markdown")
-            return
-        else:
-            await update.message.reply_text(f"Kategorie nicht gefunden: *{cat_name}*\n\nNutze `/capabilities` für alle Kategorien.", parse_mode="Markdown")
-            return
-
-    # Default: show all categories
-    total_tools = len(TOOL_DEFINITIONS)
-    response = "*Was kann Jarvis?*\n\n"
-    response += f"Total: {total_tools} Tools in {len(category_tools)} Kategorien\n\n"
-
-    # Sort categories by tool count
-    sorted_cats = sorted(category_tools.items(), key=lambda x: -len(x[1]))
-
-    for cat, tools in sorted_cats[:15]:
-        emoji = _get_category_emoji(cat)
-        response += f"{emoji} *{cat}*: {len(tools)} Tools\n"
-
-    if len(sorted_cats) > 15:
-        response += f"\n_...und {len(sorted_cats) - 15} weitere Kategorien_\n"
-
-    response += "\n*Befehle:*\n"
-    response += "• `/capabilities <kategorie>` - Details anzeigen\n"
-    response += "• `/capabilities search <term>` - Tools suchen"
-
-    await update.message.reply_text(response, parse_mode="Markdown")
-
-
-def _get_category_emoji(category: str) -> str:
-    """Get emoji for a tool category."""
-    emoji_map = {
-        "memory": "🧠",
-        "research": "🔍",
-        "learning": "📚",
-        "decision": "🎯",
-        "communication": "💬",
-        "calendar": "📅",
-        "project": "📊",
-        "task": "✅",
-        "guardrails": "🛡️",
-        "citation": "📖",
-        "verification": "✓",
-        "reflection": "🪞",
-        "uncertainty": "❓",
-        "causal": "🔗",
-        "autonomy": "🤖",
-        "rag": "📑",
-        "devops": "🔧",
-        "metrics": "📈",
-        "general": "⚙️",
-    }
-    return emoji_map.get(category.lower(), "📦")
-
-
-async def diagnose_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handle /diagnose command - self-diagnose Jarvis health and issues.
-
-    Usage:
-    /diagnose - Full system health check
-    /diagnose tools - Check tool availability
-    /diagnose memory - Check memory systems
-    /diagnose api - Check API endpoints
-    """
-    user = update.effective_user
-    if not is_allowed(user.id):
-        return
-
-    args = context.args if context.args else []
-    await update.message.reply_text("🔍 Running diagnostics...")
-
-    issues = []
-    warnings = []
-    ok_checks = []
-
-    # Check API health
-    try:
-        resp = requests.get(f"{JARVIS_API_BASE}/health", timeout=5)
-        if resp.status_code == 200:
-            health = resp.json()
-            summary = health.get("summary", {})
-            healthy = summary.get("healthy", 0)
-            total = summary.get("total_checks", 0)
-            if healthy == total:
-                ok_checks.append(f"API Health: {healthy}/{total} checks passed")
-            else:
-                warnings.append(f"API Health: {healthy}/{total} checks passed")
-        else:
-            issues.append(f"API Health: Status {resp.status_code}")
-    except Exception as e:
-        issues.append(f"API unreachable: {str(e)[:50]}")
-
-    # Check tools
-    if not args or args[0] == "tools":
-        from .tools import TOOL_REGISTRY, TOOL_DEFINITIONS
-        tool_count = len(TOOL_DEFINITIONS)
-        registry_count = len(TOOL_REGISTRY)
-        if tool_count == registry_count:
-            ok_checks.append(f"Tools: {tool_count} loaded, all registered")
-        else:
-            warnings.append(f"Tools: {tool_count} defined, {registry_count} in registry")
-
-        # Check tool categories
-        from .prompt_assembler import get_tool_categories
-        try:
-            cats = get_tool_categories()
-            ok_checks.append(f"Tool Categories: {len(cats)} categories configured")
-        except Exception as e:
-            warnings.append(f"Tool Categories: Error loading - {str(e)[:30]}")
-
-    # Check memory systems
-    if not args or args[0] == "memory":
-        try:
-            from .services.postgres_state import get_cursor
-            with get_cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM learned_facts WHERE status = 'active'")
-                fact_count = cur.fetchone()[0]
-                ok_checks.append(f"Facts DB: {fact_count} active facts")
-        except Exception as e:
-            issues.append(f"Facts DB: {str(e)[:50]}")
-
-        try:
-            from .services.qdrant_service import get_qdrant_service
-            qdrant = get_qdrant_service()
-            collections = qdrant.client.get_collections()
-            ok_checks.append(f"Qdrant: {len(collections.collections)} collections")
-        except Exception as e:
-            issues.append(f"Qdrant: {str(e)[:50]}")
-
-    # Check verification stats (S2)
-    if not args or args[0] == "verify":
-        try:
-            from .services.verify_before_act import get_verify_service
-            verify = get_verify_service()
-            stats = verify.get_verification_stats()
-            overall = stats.get("overall", {})
-            success_rate = overall.get("success_rate", 0)
-            ok_checks.append(f"Verification: {success_rate}% success rate")
-        except Exception as e:
-            warnings.append(f"Verification: {str(e)[:30]}")
-
-    # Build response
-    response = "*Jarvis Diagnostics*\n\n"
-
-    if issues:
-        response += "❌ *Issues:*\n"
-        for issue in issues:
-            response += f"  • {issue}\n"
-        response += "\n"
-
-    if warnings:
-        response += "⚠️ *Warnings:*\n"
-        for warning in warnings:
-            response += f"  • {warning}\n"
-        response += "\n"
-
-    if ok_checks:
-        response += "✅ *OK:*\n"
-        for check in ok_checks:
-            response += f"  • {check}\n"
-
-    if not issues and not warnings:
-        response += "\n🎉 *All systems operational!*"
-    elif issues:
-        response += "\n🔧 *Action needed - check issues above*"
-
-    await update.message.reply_text(response, parse_mode="Markdown")
-
-
 async def refresh_capabilities(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /refresh command - get current capabilities from direct file reads."""
     user = update.effective_user
@@ -2420,8 +2076,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await _handle_approval_callback(query, action, action_id, user.id)
         elif action_type == "notification":
             await _handle_notification_callback(query, action, action_id, user.id)
-        elif action_type == "kb":
-            await _handle_kb_callback(query, action, action_id, context, user.id)
         else:
             await query.edit_message_text(f"Unknown action type: {action_type}")
     except Exception as e:
@@ -2588,79 +2242,125 @@ async def _handle_email_callback(query, action: str, email_ref: str, user_id: in
 
 async def _handle_file_callback(query, action: str, context, user_id: int) -> None:
     """
-    Handle file-related callbacks for analysis and KB selection.
+    Handle file-related callbacks for ingestion/analysis.
 
     Actions:
-    - analyze: Analyze file content with Jarvis
-    - kb_select: Show domain selection for knowledge base indexing
+    - ingest: Save to knowledge base via /upload API
+    - analyze: Just analyze with Jarvis (no ingestion)
+    - both: Ingest + analyze
     """
+    import aiohttp
+    import tempfile
+    import os
+
     pending_file = context.user_data.get("pending_file")
     if not pending_file:
-        await query.edit_message_text("Datei nicht mehr verfügbar. Bitte erneut hochladen.")
+        await query.edit_message_text("❌ Datei nicht mehr verfügbar. Bitte erneut hochladen.")
         return
 
     file_name = pending_file.get("file_name", "unknown")
     content = pending_file.get("content", "")
-    file_type = pending_file.get("file_type", "text")
+    source_type = pending_file.get("source_type", "text")
+    namespace = pending_file.get("namespace", "private")
+    file_bytes = pending_file.get("file_bytes", b"")
     caption = pending_file.get("caption", "")
 
-    if action == "kb_select":
-        # Show domain selection buttons
-        from .services.knowledge_sources import get_all_domains
+    if action == "ingest" or action == "both":
+        # Ingest to knowledge base
+        await query.edit_message_text(f"💾 Speichere {file_name} in Wissensbasis...")
 
-        domains = get_all_domains()
+        try:
+            # Create temp file for upload
+            with tempfile.NamedTemporaryFile(mode='wb', suffix=f"_{file_name}", delete=False) as tmp:
+                tmp.write(file_bytes)
+                tmp_path = tmp.name
 
-        # Build domain buttons (max 3 per row)
-        buttons = []
-        row = []
-        for domain in domains:
-            row.append(InlineKeyboardButton(
-                f"📁 {domain}",
-                callback_data=f"kb:add:{domain}"
-            ))
-            if len(row) >= 3:
-                buttons.append(row)
-                row = []
-        if row:
-            buttons.append(row)
+            # Call upload API
+            async with aiohttp.ClientSession() as session:
+                data = aiohttp.FormData()
+                with open(tmp_path, 'rb') as f:
+                    data.add_field('file',
+                                  f,
+                                  filename=file_name,
+                                  content_type='application/octet-stream')
+                    data.add_field('source_type', source_type)
+                    data.add_field('namespace', namespace)
+                    data.add_field('process_sync', 'true')
 
-        # Add "new domain" and cancel buttons
-        buttons.append([
-            InlineKeyboardButton("➕ Neue Domain", callback_data="kb:new:_"),
-            InlineKeyboardButton("❌ Abbrechen", callback_data="kb:cancel:_")
-        ])
+                    async with session.post(
+                        'http://localhost:18000/upload',
+                        data=data
+                    ) as resp:
+                        result = await resp.json()
+                        status_code = resp.status
 
-        keyboard = InlineKeyboardMarkup(buttons)
+            os.unlink(tmp_path)
 
-        await query.edit_message_text(
-            f"*Wissensbasis: Domain wählen*\n\n"
-            f"Datei: {file_name}\n"
-            f"Typ: {file_type.upper()}\n\n"
-            f"In welche Domain soll die Datei indexiert werden?",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
-        return
+            if status_code == 200 and result.get("status") == "uploaded":
+                proc = result.get("processing", {})
+                msg_count = proc.get("messages_extracted", 0)
+                windows = proc.get("windows_embedded", 0)
+                participants = proc.get("participants_found", [])
 
-    elif action == "analyze":
+                success_msg = (
+                    f"✅ *Erfolgreich gespeichert!*\n\n"
+                    f"📄 Datei: {file_name}\n"
+                    f"💬 Nachrichten: {msg_count}\n"
+                    f"🔗 Eingebettet: {windows} Fenster\n"
+                )
+                if participants:
+                    success_msg += f"👥 Teilnehmer: {', '.join(participants[:5])}"
+                    if len(participants) > 5:
+                        success_msg += f" (+{len(participants)-5})"
+
+                if action == "ingest":
+                    await query.edit_message_text(success_msg, parse_mode="Markdown")
+                    context.user_data.pop("pending_file", None)
+                    return
+                else:
+                    # Continue to analysis for "both" action
+                    await query.edit_message_text(
+                        success_msg + "\n\n🔍 Analysiere...",
+                        parse_mode="Markdown"
+                    )
+            else:
+                error_msg = result.get("message", result.get("error", "Unbekannter Fehler"))
+                await query.edit_message_text(f"❌ Fehler beim Speichern: {error_msg}")
+                return
+
+        except Exception as e:
+            log_with_context(logger, "error", "File ingestion failed",
+                           file_name=file_name, error=str(e))
+            await query.edit_message_text(f"❌ Fehler: {str(e)[:100]}")
+            return
+
+    if action == "analyze" or action == "both":
         # Analyze with Jarvis
-        await query.edit_message_text(f"🔍 Analysiere {file_name}...")
-
         state = get_user_state(user_id)
         session_id = state.get("session_id") or str(uuid.uuid4())[:8]
-        namespace = state.get("namespace", "private")
         role = state.get("role", "assistant")
 
-        # Build analysis query based on file type
-        # IMPORTANT: Explicitly tell Jarvis this is READ-ONLY analysis
-        query_text = (
-            f"[ANALYSE-MODUS: Nur analysieren und zusammenfassen. "
-            f"KEINE Tools verwenden, NICHTS in Datenbank speichern. "
-            f"Der User wird nach der Analyse selbst entscheiden, ob er die Erkenntnisse speichern möchte.]\n\n"
-            f"Analysiere diese {file_type.upper()}-Datei: {file_name}\n"
-            + (f"Benutzer-Kontext: {caption}\n\n" if caption else "")
-            + f"---BEGIN CONTENT---\n{content[:8000]}\n---END CONTENT---"
-        )
+        # Build analysis query
+        if source_type == "whatsapp":
+            query_text = (
+                f"Der Benutzer hat einen WhatsApp-Export hochgeladen ({file_name}).\n"
+                + (f"Benutzer-Kommentar: {caption}\n\n" if caption else "")
+                + f"Analysiere den Chat und fasse die wichtigsten Themen zusammen:\n\n"
+                f"---BEGIN CHAT---\n{content[:8000]}\n---END CHAT---"
+            )
+        elif source_type == "google_chat":
+            query_text = (
+                f"Der Benutzer hat einen Google Chat Export hochgeladen ({file_name}).\n"
+                + (f"Benutzer-Kommentar: {caption}\n\n" if caption else "")
+                + f"Analysiere den Chat:\n\n"
+                f"---BEGIN CHAT---\n{content[:8000]}\n---END CHAT---"
+            )
+        else:
+            query_text = (
+                f"Analysiere diese Datei: {file_name}\n"
+                + (f"Kommentar: {caption}\n\n" if caption else "")
+                + f"---BEGIN CONTENT---\n{content[:8000]}\n---END CONTENT---"
+            )
 
         if len(content) > 8000:
             query_text += f"\n\n(Gekürzt, {len(content) - 8000} Zeichen ausgelassen)"
@@ -2668,344 +2368,20 @@ async def _handle_file_callback(query, action: str, context, user_id: int) -> No
         result = call_jarvis_agent(query_text, session_id, namespace, role, user_id=user_id)
 
         if "error" in result:
-            await query.edit_message_text(f"Analyse-Fehler: {result['error']}")
+            await query.edit_message_text(f"❌ Analyse-Fehler: {result['error']}")
         else:
             answer = result.get("answer", "Keine Antwort")
             usage = result.get("usage", {})
 
-            response = f"*Analyse: {file_name}*\n\n{answer}"
+            response = f"🔍 *Analyse: {file_name}*\n\n{answer}"
             if usage:
-                response += f"\n\n_{usage.get('input_tokens', 0)}->{usage.get('output_tokens', 0)} tokens_"
+                response += f"\n\n_{usage.get('input_tokens', 0)}→{usage.get('output_tokens', 0)} tokens_"
 
-            # Telegram limit (leave room for buttons)
-            if len(response) > 3800:
-                response = response[:3797] + "..."
+            # Telegram limit
+            if len(response) > 4000:
+                response = response[:3997] + "..."
 
-            # Store analysis result for potential learning extraction
-            context.user_data["last_analysis"] = {
-                "file_name": file_name,
-                "content": content[:4000],  # Keep truncated for learning
-                "analysis": answer,
-                "caption": caption
-            }
-
-            # Offer follow-up actions
-            buttons = [
-                [
-                    InlineKeyboardButton("💡 Erkenntnisse speichern", callback_data="file:save_learnings"),
-                    InlineKeyboardButton("📚 In Wissensbasis", callback_data="file:kb_select")
-                ],
-                [
-                    InlineKeyboardButton("✓ Fertig", callback_data="file:done")
-                ]
-            ]
-            keyboard = InlineKeyboardMarkup(buttons)
-
-            await query.edit_message_text(response, parse_mode="Markdown", reply_markup=keyboard)
-
-        # Don't clean up yet - user might want follow-up actions
-
-    elif action == "save_learnings":
-        # User wants to save learnings from analysis
-        last_analysis = context.user_data.get("last_analysis")
-        if not last_analysis:
-            await query.edit_message_text("Keine Analyse verfügbar. Bitte Datei erneut analysieren.")
-            return
-
-        await query.edit_message_text("💡 Extrahiere und speichere Erkenntnisse...")
-
-        state = get_user_state(user_id)
-        session_id = state.get("session_id") or str(uuid.uuid4())[:8]
-        namespace = state.get("namespace", "private")
-        role = state.get("role", "assistant")
-
-        # Ask Jarvis to extract and save learnings
-        learning_query = (
-            f"Basierend auf dieser Analyse, extrahiere die wichtigsten Erkenntnisse über den User "
-            f"und speichere sie mit record_learnings_batch.\n\n"
-            f"Datei: {last_analysis['file_name']}\n"
-            + (f"User-Kontext: {last_analysis['caption']}\n\n" if last_analysis.get('caption') else "")
-            + f"Analyse:\n{last_analysis['analysis'][:3000]}"
-        )
-
-        result = call_jarvis_agent(learning_query, session_id, namespace, role, user_id=user_id)
-
-        if "error" in result:
-            await query.edit_message_text(f"Fehler: {result['error']}")
-        else:
-            answer = result.get("answer", "Erkenntnisse gespeichert.")
-            await query.edit_message_text(f"💡 {answer}", parse_mode="Markdown")
-
-        # Clean up
-        context.user_data.pop("last_analysis", None)
-        context.user_data.pop("pending_file", None)
-
-    elif action == "done":
-        # User is done, clean up
-        await query.edit_message_text(
-            query.message.text.split("\n\nWas soll ich")[0] if query.message.text else "Analyse abgeschlossen.",
-            parse_mode="Markdown"
-        )
-        context.user_data.pop("last_analysis", None)
-        context.user_data.pop("pending_file", None)
-
-
-async def _handle_kb_callback(query, action: str, action_id: str, context, user_id: int) -> None:
-    """
-    Handle knowledge base related callbacks.
-
-    Actions:
-    - add:{domain}: Add file to specified domain
-    - new:_: Create new domain (prompts for name)
-    - cancel:_: Cancel KB indexing
-    - confirm:{domain}: Confirm after subdomain input
-    """
-    import os
-    from datetime import datetime
-
-    pending_file = context.user_data.get("pending_file")
-    if not pending_file:
-        await query.edit_message_text("Datei nicht mehr verfügbar. Bitte erneut hochladen.")
-        return
-
-    file_name = pending_file.get("file_name", "unknown")
-    file_type = pending_file.get("file_type", "text")
-    content = pending_file.get("content", "")
-    title = pending_file.get("title", file_name)
-    file_bytes = pending_file.get("file_bytes", b"")
-
-    if action == "cancel":
-        await query.edit_message_text("Indexierung abgebrochen.")
-        context.user_data.pop("pending_file", None)
-        return
-
-    elif action == "new":
-        # Prompt user to enter domain name
-        await query.edit_message_text(
-            "*Neue Domain erstellen*\n\n"
-            "Sende mir den Namen der neuen Domain als nächste Nachricht.\n"
-            "Beispiele: `linkedin`, `visualfox`, `pixera`, `personal`\n\n"
-            "_Oder /cancel zum Abbrechen_",
-            parse_mode="Markdown"
-        )
-        # Set state to wait for domain name
-        context.user_data["awaiting_domain_name"] = True
-        return
-
-    elif action == "add":
-        domain = action_id
-        await query.edit_message_text(f"Indexiere {file_name} in Domain '{domain}'...")
-
-        try:
-            # Save file to disk
-            safe_filename = file_name.replace(" ", "_").replace("/", "_")
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-            # Check if file already exists
-            target_dir = f"/brain/system/data/{domain}"
-            target_path = f"{target_dir}/{safe_filename}"
-
-            # Create directory if needed (will happen in container)
-            os.makedirs(target_dir, exist_ok=True)
-
-            # Check for duplicates
-            if os.path.exists(target_path):
-                base, ext = os.path.splitext(safe_filename)
-                safe_filename = f"{base}_{timestamp}{ext}"
-                target_path = f"{target_dir}/{safe_filename}"
-
-            # Write file
-            with open(target_path, "wb") as f:
-                f.write(file_bytes)
-
-            # Add to knowledge sources DB
-            from .services.knowledge_sources import add_knowledge_source
-            from .services.knowledge_ingestion import ingest_knowledge_source, get_active_sources
-
-            result = add_knowledge_source(
-                domain=domain,
-                file_path=target_path,
-                title=title,
-                version=datetime.now().strftime("%Y-%m-%d"),
-                owner="michael_bohl",
-                channel="telegram_upload",
-                language="de",
-                quality="medium"  # User uploads get medium quality by default
-            )
-
-            if not result.get("success"):
-                await query.edit_message_text(
-                    f"Fehler beim Registrieren: {result.get('error')}"
-                )
-                return
-
-            source_id = result.get("id")
-
-            # Trigger ingestion
-            from .services.knowledge_sources import get_source_by_id
-            from .services.knowledge_ingestion import get_qdrant_client, ingest_knowledge_source
-            source = get_source_by_id(source_id)
-
-            if source:
-                qdrant = get_qdrant_client()
-                ingest_result = ingest_knowledge_source(qdrant, source)
-
-                if ingest_result.get("status") == "ingested":
-                    chunks = ingest_result.get("chunks_created", 0)
-                    await query.edit_message_text(
-                        f"*Erfolgreich indexiert!*\n\n"
-                        f"Datei: {file_name}\n"
-                        f"Domain: {domain}\n"
-                        f"Chunks: {chunks}\n"
-                        f"Pfad: `{target_path}`\n\n"
-                        f"Die Datei ist jetzt in der Wissensbasis verfügbar.",
-                        parse_mode="Markdown"
-                    )
-                else:
-                    error = ingest_result.get("error", "Unbekannter Fehler")
-                    await query.edit_message_text(
-                        f"*Datei gespeichert, aber Indexierung fehlgeschlagen*\n\n"
-                        f"Fehler: {error}\n"
-                        f"Pfad: `{target_path}`\n\n"
-                        f"Du kannst später mit `/ingest {domain}` erneut versuchen.",
-                        parse_mode="Markdown"
-                    )
-            else:
-                await query.edit_message_text(
-                    f"*Datei registriert*\n\n"
-                    f"Pfad: `{target_path}`\n"
-                    f"Indexierung wird beim nächsten /ingest durchgeführt.",
-                    parse_mode="Markdown"
-                )
-
-        except Exception as e:
-            log_with_context(logger, "error", "KB indexing failed",
-                           file_name=file_name, domain=domain, error=str(e))
-            await query.edit_message_text(f"Fehler beim Indexieren: {str(e)[:200]}")
-
-        # Clean up
-        context.user_data.pop("pending_file", None)
-
-
-async def _handle_new_domain_input(update: Update, context: ContextTypes.DEFAULT_TYPE, domain_name: str) -> None:
-    """
-    Handle user input for new domain name when adding to knowledge base.
-
-    Called when awaiting_domain_name is True in user_data.
-    """
-    import os
-    import re
-    from datetime import datetime
-
-    # Clear the awaiting flag
-    context.user_data.pop("awaiting_domain_name", None)
-
-    # Handle cancel
-    if domain_name.lower() in ("/cancel", "cancel", "abbrechen"):
-        await update.message.reply_text("Indexierung abgebrochen.")
-        context.user_data.pop("pending_file", None)
-        return
-
-    # Validate domain name
-    domain = domain_name.strip().lower()
-    if not re.match(r'^[a-z0-9_-]+$', domain):
-        await update.message.reply_text(
-            "Ungültiger Domain-Name. Nur Kleinbuchstaben, Zahlen, _ und - erlaubt.\n"
-            "Versuche es nochmal oder /cancel zum Abbrechen."
-        )
-        context.user_data["awaiting_domain_name"] = True
-        return
-
-    pending_file = context.user_data.get("pending_file")
-    if not pending_file:
-        await update.message.reply_text("Datei nicht mehr verfügbar. Bitte erneut hochladen.")
-        return
-
-    file_name = pending_file.get("file_name", "unknown")
-    file_bytes = pending_file.get("file_bytes", b"")
-    title = pending_file.get("title", file_name)
-
-    await update.message.reply_text(f"Erstelle Domain '{domain}' und indexiere {file_name}...")
-
-    try:
-        # Create directory and save file
-        safe_filename = file_name.replace(" ", "_").replace("/", "_")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        target_dir = f"/brain/system/data/{domain}"
-        target_path = f"{target_dir}/{safe_filename}"
-
-        os.makedirs(target_dir, exist_ok=True)
-
-        # Check for duplicates
-        if os.path.exists(target_path):
-            base, ext = os.path.splitext(safe_filename)
-            safe_filename = f"{base}_{timestamp}{ext}"
-            target_path = f"{target_dir}/{safe_filename}"
-
-        # Write file
-        with open(target_path, "wb") as f:
-            f.write(file_bytes)
-
-        # Add to knowledge sources DB
-        from .services.knowledge_sources import add_knowledge_source, get_source_by_id
-        from .services.knowledge_ingestion import get_qdrant_client, ingest_knowledge_source
-
-        result = add_knowledge_source(
-            domain=domain,
-            file_path=target_path,
-            title=title,
-            version=datetime.now().strftime("%Y-%m-%d"),
-            owner="michael_bohl",
-            channel="telegram_upload",
-            language="de",
-            quality="medium"
-        )
-
-        if not result.get("success"):
-            await update.message.reply_text(
-                f"Fehler beim Registrieren: {result.get('error')}"
-            )
-            return
-
-        source_id = result.get("id")
-        source = get_source_by_id(source_id)
-
-        if source:
-            qdrant = get_qdrant_client()
-            ingest_result = ingest_knowledge_source(qdrant, source)
-
-            if ingest_result.get("status") == "ingested":
-                chunks = ingest_result.get("chunks_created", 0)
-                await update.message.reply_text(
-                    f"*Erfolgreich indexiert!*\n\n"
-                    f"Datei: {file_name}\n"
-                    f"Neue Domain: {domain}\n"
-                    f"Chunks: {chunks}\n"
-                    f"Pfad: `{target_path}`\n\n"
-                    f"Die Datei ist jetzt in der Wissensbasis verfügbar.",
-                    parse_mode="Markdown"
-                )
-            else:
-                error = ingest_result.get("error", "Unbekannter Fehler")
-                await update.message.reply_text(
-                    f"*Datei gespeichert, aber Indexierung fehlgeschlagen*\n\n"
-                    f"Fehler: {error}\n"
-                    f"Pfad: `{target_path}`",
-                    parse_mode="Markdown"
-                )
-        else:
-            await update.message.reply_text(
-                f"*Datei registriert in neuer Domain*\n\n"
-                f"Domain: {domain}\n"
-                f"Pfad: `{target_path}`",
-                parse_mode="Markdown"
-            )
-
-    except Exception as e:
-        log_with_context(logger, "error", "New domain KB indexing failed",
-                       file_name=file_name, domain=domain, error=str(e))
-        await update.message.reply_text(f"Fehler: {str(e)[:200]}")
+            await query.edit_message_text(response, parse_mode="Markdown")
 
     # Clean up
     context.user_data.pop("pending_file", None)
@@ -3052,20 +2428,15 @@ def build_alert_buttons(alert_id: str = "default") -> InlineKeyboardMarkup:
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Handle file/document uploads with universal parser.
+    Handle file/document uploads.
 
-    Supports all major formats:
-    - Text: TXT, MD, CSV, JSON, LOG, XML, YAML
-    - Documents: PDF, DOCX
-    - Images: JPEG, PNG, GIF, WEBP (via Claude Vision)
+    Supports:
+    - TXT files: WhatsApp exports -> Ingest to knowledge base
+    - JSON files: Google Chat exports -> Ingest to knowledge base
+    - EML/MBOX files: Email exports -> Ingest to knowledge base
 
-    Offers: Analyze / Add to Knowledge Base (with domain selection)
+    Offers buttons to choose: Analyze / Ingest / Both
     """
-    from .services.document_parser import (
-        parse_document, is_supported, get_file_info, get_supported_formats,
-        SUPPORTED_EXTENSIONS
-    )
-
     user = update.effective_user
     if not is_allowed(user.id):
         await update.message.reply_text("Sorry, you're not authorized.")
@@ -3088,16 +2459,28 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    # Check if file type is supported
-    if not is_supported(file_name):
-        formats = get_supported_formats()
-        format_list = "\n".join([
-            f"- {cat.title()}: {', '.join(exts)}"
-            for cat, exts in formats.items()
-        ])
+    # Detect file type and source
+    source_type = None
+    if file_name_lower.endswith(".txt"):
+        source_type = "whatsapp"
+    elif file_name_lower.endswith(".json"):
+        # Could be Google Chat or Email JSON
+        source_type = "google_chat"  # Will verify content later
+    elif file_name_lower.endswith((".eml", ".mbox")):
+        source_type = "email"
+
+    # Check if it's a supported file
+    supported_extensions = (".txt", ".json", ".eml", ".mbox", ".md", ".csv", ".log")
+    is_supported = file_name_lower.endswith(supported_extensions)
+
+    if not is_supported:
         await update.message.reply_text(
             f"Dateityp nicht unterstützt: {mime_type or file_name}\n\n"
-            f"Unterstützte Formate:\n{format_list}"
+            "Unterstützt:\n"
+            "- WhatsApp: .txt\n"
+            "- Google Chat: .json\n"
+            "- Email: .eml, .mbox, .json\n"
+            "- Andere: .md, .csv, .log"
         )
         return
 
@@ -3109,65 +2492,84 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         file = await context.bot.get_file(document.file_id)
         file_bytes = await file.download_as_bytearray()
 
-        # Parse document using universal parser
-        parsed = parse_document(bytes(file_bytes), file_name, use_vision_for_images=True)
+        # Decode content (try UTF-8, then Latin-1)
+        try:
+            content = file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            content = file_bytes.decode("latin-1")
 
-        if not parsed.success:
-            await update.message.reply_text(
-                f"Fehler beim Parsen: {parsed.error}\n\n"
-                "Versuche ein anderes Format."
-            )
-            return
+        # Detect WhatsApp export pattern
+        is_whatsapp = _detect_whatsapp_export(content)
+        if is_whatsapp:
+            source_type = "whatsapp"
 
-        # Store parsed info in context for callback
+        # Detect Google Chat JSON
+        is_gchat = False
+        if file_name_lower.endswith(".json"):
+            try:
+                import json
+                data = json.loads(content)
+                if isinstance(data, dict) and "messages" in data:
+                    is_gchat = True
+                    source_type = "google_chat"
+                elif isinstance(data, list) and data and "createTime" in str(data[0]):
+                    is_gchat = True
+                    source_type = "google_chat"
+            except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+                log_with_context(logger, "debug", "Content doesn't look like Google Chat JSON format")
+                is_gchat = False
+
+        # Store file info in context for callback
         context.user_data["pending_file"] = {
             "file_id": document.file_id,
             "file_name": file_name,
-            "file_type": parsed.file_type,
-            "content": parsed.content,
-            "title": parsed.title,
-            "metadata": parsed.metadata,
-            "file_bytes": file_bytes,
-            "caption": update.message.caption or "",
-            "user_id": user.id
+            "content": content,
+            "source_type": source_type,
+            "file_bytes": file_bytes
         }
 
-        # Get caption (user context)
-        caption = update.message.caption or ""
+        # Build info message and buttons
+        file_info = f"Datei: {file_name}\n"
+        file_info += f"Grösse: {len(content):,} Zeichen\n"
 
-        # Build info message
-        file_info = f"*Datei:* {file_name}\n"
-        file_info += f"*Typ:* {parsed.file_type.upper()}\n"
-        file_info += f"*Grösse:* {file_size // 1024} KB\n"
-
-        if parsed.metadata.get("page_count"):
-            file_info += f"*Seiten:* {parsed.metadata['page_count']}\n"
-        if parsed.metadata.get("line_count"):
-            file_info += f"*Zeilen:* {parsed.metadata['line_count']}\n"
-        if parsed.metadata.get("char_count"):
-            file_info += f"*Zeichen:* {parsed.metadata['char_count']:,}\n"
-
-        # Show user's context if provided
-        if caption:
-            file_info += f"\n*Dein Kontext:*\n_{caption[:200]}{'...' if len(caption) > 200 else ''}_\n"
-
-        file_info += f"\n*Vorschau:*\n{parsed.preview[:300]}..."
+        if source_type == "whatsapp":
+            file_info += "Typ: WhatsApp Export erkannt\n"
+        elif source_type == "google_chat":
+            file_info += "Typ: Google Chat Export erkannt\n"
+        elif source_type == "email":
+            file_info += "Typ: Email Export\n"
+        else:
+            file_info += "Typ: Textdatei\n"
 
         # Offer action buttons
-        buttons = [
-            [
-                InlineKeyboardButton("🔍 Analysieren", callback_data="file:analyze"),
-                InlineKeyboardButton("📚 In Wissensbasis", callback_data="file:kb_select")
-            ]
-        ]
+        buttons = []
+        if source_type in ("whatsapp", "google_chat", "email"):
+            buttons.append([
+                InlineKeyboardButton("💾 Speichern", callback_data="file:ingest"),
+                InlineKeyboardButton("🔍 Analysieren", callback_data="file:analyze")
+            ])
+            buttons.append([
+                InlineKeyboardButton("💾+🔍 Beides", callback_data="file:both")
+            ])
+        else:
+            # Generic text file - just analyze
+            buttons.append([
+                InlineKeyboardButton("🔍 Analysieren", callback_data="file:analyze")
+            ])
 
         keyboard = InlineKeyboardMarkup(buttons)
 
+        # Store namespace from user state for later use
+        state = get_user_state(user.id)
+        context.user_data["pending_file"]["namespace"] = state.get("namespace", "private")
+        context.user_data["pending_file"]["caption"] = update.message.caption or ""
+        context.user_data["pending_file"]["user_id"] = user.id
+
         await update.message.reply_text(
-            file_info + "\n\nWas soll ich damit machen?",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
+            file_info + "\nWas soll ich damit machen?",
+            reply_markup=keyboard
         )
+        # Processing happens in callback handler when user clicks a button
 
     except Exception as e:
         log_with_context(logger, "error", "Error processing document", error=str(e), file_name=file_name)
@@ -3204,28 +2606,16 @@ def _detect_whatsapp_export(content: str) -> bool:
     return False
 
 
-# ============ Voice Message Handler ============
-
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handle voice messages.
-
-    Flow:
-    1. Download voice file from Telegram
-    2. Transcribe using Whisper (STT)
-    3. Process as normal text query
-    4. Optionally respond with voice (TTS)
-    """
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle regular messages"""
     user = update.effective_user
     if not is_allowed(user.id):
         await update.message.reply_text("Sorry, you're not authorized.")
         return
 
-    voice = update.message.voice
-    if not voice:
-        return
+    query = update.message.text
 
-    # Get user state
+    # Get user state from database
     state = get_user_state(user.id)
     session_id = state["session_id"]
     namespace = state["namespace"]
@@ -3236,390 +2626,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         session_id = str(uuid.uuid4())[:8]
         save_user_state(user.id, session_id=session_id)
 
-    # Show "recording" action while processing voice
-    await update.message.chat.send_action("record_voice")
-
-    try:
-        # Import voice services
-        from .services.voice_handler import get_voice_handler, VoicePreference
-
-        handler = get_voice_handler()
-
-        # Download voice file
-        file = await context.bot.get_file(voice.file_id)
-        voice_bytes = await file.download_as_bytearray()
-
-        # Transcribe voice message (default to German for better recognition)
-        result = await handler.process_voice_message(
-            audio=bytes(voice_bytes),
-            user_id=str(user.id),
-            channel="telegram",
-            format="ogg",  # Telegram uses OGG Opus
-            language_hint="de",  # Default to German
-        )
-
-        transcribed_text = result.transcription.text
-
-        if not transcribed_text or not transcribed_text.strip():
-            await update.message.reply_text(
-                "🎤 Konnte die Sprachnachricht nicht verstehen. Bitte versuche es erneut."
-            )
-            return
-
-        # Log transcription
-        log_with_context(
-            logger, "info", "Voice message transcribed",
-            user_id=user.id,
-            duration_seconds=voice.duration,
-            text_length=len(transcribed_text),
-            language=result.language_detected,
-        )
-
-        # Show what was transcribed
-        await update.message.reply_text(f"🎤 _{transcribed_text}_", parse_mode="Markdown")
-
-        # Now process as normal query
-        await update.message.chat.send_action("typing")
-
-        agent_result = call_jarvis_agent(
-            transcribed_text, session_id, namespace, role, user_id=user.id
-        )
-
-        if "error" in agent_result:
-            await update.message.reply_text(f"Error: {agent_result['error']}")
-            return
-
-        # Update session if returned
-        if agent_result.get("session_id") and agent_result["session_id"] != session_id:
-            save_user_state(user.id, session_id=agent_result["session_id"])
-
-        # Get response
-        answer = agent_result.get("answer", "No response")
-        if not answer or not str(answer).strip():
-            answer = "Keine Antwort erhalten."
-
-        # Check if user wants voice response
-        settings = handler.get_user_settings(str(user.id))
-        should_voice_respond = settings.preference in [
-            VoicePreference.FULL_VOICE,
-            VoicePreference.AUTO,
-        ]
-
-        if should_voice_respond and len(answer) < 4000:  # TTS limit
-            # Generate voice response
-            await update.message.chat.send_action("record_voice")
-
-            voice_result = await handler.generate_voice_response(
-                answer, str(user.id), force_voice=True
-            )
-
-            if voice_result and voice_result.synthesis.audio_bytes:
-                # Send voice message
-                import io
-                audio_io = io.BytesIO(voice_result.synthesis.audio_bytes)
-                audio_io.name = "response.mp3"
-
-                await update.message.reply_voice(
-                    voice=audio_io,
-                    caption=f"[{len(answer)} Zeichen]" if len(answer) > 200 else None,
-                )
-
-                # Also send text for reference (collapsed)
-                if len(answer) > 100:
-                    # Truncate for text backup
-                    text_preview = answer[:500] + "..." if len(answer) > 500 else answer
-                    await update.message.reply_text(
-                        f"📝 _{text_preview}_",
-                        parse_mode="Markdown",
-                    )
-                return
-
-        # Fallback: text response
-        tool_calls = agent_result.get("tool_calls", [])
-        tools_used = [tc.get("tool") for tc in tool_calls if tc.get("tool") != "no_tool_needed"]
-
-        response = ""
-        if tools_used:
-            response += f"[{', '.join(tools_used)}]\n\n"
-        response += answer
-
-        usage = agent_result.get("usage", {})
-        if usage:
-            response += f"\n\n[{usage.get('input_tokens', 0)}->{usage.get('output_tokens', 0)} tokens]"
-
-        # Telegram limit
-        if len(response) > 4000:
-            response = response[:3997] + "..."
-
-        await update.message.reply_text(response)
-
-    except ImportError as e:
-        log_with_context(logger, "error", f"Voice service import error: {e}")
-        await update.message.reply_text(
-            "🎤 Voice-Service nicht verfügbar. Bitte als Text senden."
-        )
-    except Exception as e:
-        log_with_context(logger, "error", f"Voice processing error: {e}", user_id=user.id)
-        await update.message.reply_text(
-            f"🎤 Fehler bei der Sprachverarbeitung: {str(e)[:100]}"
-        )
-
-
-async def voice_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /voice command - Configure voice preferences.
-
-    Usage:
-        /voice - Show current settings
-        /voice on - Enable full voice mode (voice in & out)
-        /voice off - Disable voice responses (text only)
-        /voice auto - Auto mode (respond with voice if input was voice)
-    """
-    user = update.effective_user
-    if not is_allowed(user.id):
-        await update.message.reply_text("Sorry, you're not authorized.")
-        return
-
-    try:
-        from .services.voice_handler import get_voice_handler, VoicePreference
-
-        handler = get_voice_handler()
-        user_id = str(user.id)
-
-        args = context.args
-
-        if not args:
-            # Show current settings
-            settings = handler.get_user_settings(user_id)
-
-            mode_emoji = {
-                VoicePreference.TEXT_ONLY: "📝",
-                VoicePreference.VOICE_IN_TEXT_OUT: "🎤→📝",
-                VoicePreference.TEXT_IN_VOICE_OUT: "📝→🔊",
-                VoicePreference.FULL_VOICE: "🎤↔️🔊",
-                VoicePreference.AUTO: "🔄",
-            }
-
-            await update.message.reply_text(
-                f"🎤 *Voice Settings*\n\n"
-                f"Modus: {mode_emoji.get(settings.preference, '?')} `{settings.preference.value}`\n"
-                f"Sprache: `{settings.preferred_language or 'auto'}`\n"
-                f"Geschwindigkeit: `{settings.voice_speed}x`\n"
-                f"Auto-Transkription: `{'ja' if settings.auto_transcribe else 'nein'}`\n\n"
-                f"*Befehle:*\n"
-                f"`/voice on` - Volle Voice (🎤↔️🔊)\n"
-                f"`/voice off` - Nur Text (📝)\n"
-                f"`/voice auto` - Automatisch (🔄)\n"
-                f"`/voice speed 1.2` - Geschwindigkeit",
-                parse_mode="Markdown",
-            )
-            return
-
-        arg = args[0].lower()
-
-        if arg == "on":
-            handler.update_user_settings(user_id, preference=VoicePreference.FULL_VOICE)
-            await update.message.reply_text("🎤↔️🔊 Voice-Modus aktiviert. Ich antworte jetzt mit Sprache!")
-
-        elif arg == "off":
-            handler.update_user_settings(user_id, preference=VoicePreference.TEXT_ONLY)
-            await update.message.reply_text("📝 Text-Modus aktiviert. Nur Textantworten.")
-
-        elif arg == "auto":
-            handler.update_user_settings(user_id, preference=VoicePreference.AUTO)
-            await update.message.reply_text("🔄 Auto-Modus. Voice-Antwort bei Voice-Input.")
-
-        elif arg == "speed" and len(args) > 1:
-            try:
-                speed = float(args[1])
-                if 0.25 <= speed <= 4.0:
-                    handler.update_user_settings(user_id, voice_speed=speed)
-                    await update.message.reply_text(f"🔊 Sprachgeschwindigkeit: {speed}x")
-                else:
-                    await update.message.reply_text("Speed muss zwischen 0.25 und 4.0 liegen.")
-            except ValueError:
-                await update.message.reply_text("Ungültiger Speed-Wert.")
-
-        else:
-            await update.message.reply_text(
-                "Unbekannter Befehl. Nutze:\n"
-                "`/voice on` | `off` | `auto` | `speed 1.2`",
-                parse_mode="Markdown",
-            )
-
-    except ImportError as e:
-        await update.message.reply_text("Voice-Service nicht verfügbar.")
-    except Exception as e:
-        log_with_context(logger, "error", f"Voice settings error: {e}")
-        await update.message.reply_text(f"Fehler: {str(e)[:100]}")
-
-
-async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handle audio file messages (MP3, M4A, etc.).
-
-    Similar to voice messages but for audio files sent as attachments.
-    """
-    user = update.effective_user
-    if not is_allowed(user.id):
-        await update.message.reply_text("Sorry, you're not authorized.")
-        return
-
-    audio = update.message.audio
-    if not audio:
-        return
-
-    # Check file size (max 20MB for audio transcription)
-    if audio.file_size and audio.file_size > 20 * 1024 * 1024:
-        await update.message.reply_text(
-            "🎵 Audio-Datei zu gross (max 20MB für Transkription)."
-        )
-        return
-
-    # Get user state
-    state = get_user_state(user.id)
-    session_id = state["session_id"]
-    namespace = state["namespace"]
-    role = state["role"]
-
-    if not session_id:
-        session_id = str(uuid.uuid4())[:8]
-        save_user_state(user.id, session_id=session_id)
-
-    await update.message.chat.send_action("typing")
-
-    try:
-        from .services.voice_handler import get_voice_handler, VoicePreference
-
-        handler = get_voice_handler()
-
-        # Download audio file
-        file = await context.bot.get_file(audio.file_id)
-        audio_bytes = await file.download_as_bytearray()
-
-        # Determine format from mime type
-        mime = audio.mime_type or ""
-        if "mp3" in mime or "mpeg" in mime:
-            audio_format = "mp3"
-        elif "m4a" in mime or "mp4" in mime or "aac" in mime:
-            audio_format = "m4a"
-        elif "ogg" in mime or "opus" in mime:
-            audio_format = "ogg"
-        elif "wav" in mime:
-            audio_format = "wav"
-        elif "flac" in mime:
-            audio_format = "flac"
-        else:
-            audio_format = "mp3"  # Default fallback
-
-        # Transcribe
-        result = await handler.process_voice_message(
-            audio=bytes(audio_bytes),
-            user_id=str(user.id),
-            channel="telegram",
-            format=audio_format,
-            language_hint="de",
-        )
-
-        transcribed_text = result.transcription.text
-
-        if not transcribed_text or not transcribed_text.strip():
-            await update.message.reply_text(
-                "🎵 Konnte die Audio-Datei nicht transkribieren."
-            )
-            return
-
-        # Log
-        log_with_context(
-            logger, "info", "Audio file transcribed",
-            user_id=user.id,
-            duration_seconds=audio.duration,
-            text_length=len(transcribed_text),
-            format=audio_format,
-        )
-
-        # Show transcription
-        duration_str = f" ({audio.duration}s)" if audio.duration else ""
-        await update.message.reply_text(
-            f"🎵 *Transkription*{duration_str}:\n\n_{transcribed_text}_",
-            parse_mode="Markdown",
-        )
-
-        # Process as query
-        await update.message.chat.send_action("typing")
-
-        agent_result = call_jarvis_agent(
-            transcribed_text, session_id, namespace, role, user_id=user.id
-        )
-
-        if "error" in agent_result:
-            await update.message.reply_text(f"Error: {agent_result['error']}")
-            return
-
-        if agent_result.get("session_id") and agent_result["session_id"] != session_id:
-            save_user_state(user.id, session_id=agent_result["session_id"])
-
-        answer = agent_result.get("answer", "No response")
-        if not answer or not str(answer).strip():
-            answer = "Keine Antwort erhalten."
-
-        # Text response (audio files usually don't need voice response)
-        tool_calls = agent_result.get("tool_calls", [])
-        tools_used = [tc.get("tool") for tc in tool_calls if tc.get("tool") != "no_tool_needed"]
-
-        response = ""
-        if tools_used:
-            response += f"[{', '.join(tools_used)}]\n\n"
-        response += answer
-
-        if len(response) > 4000:
-            response = response[:3997] + "..."
-
-        await update.message.reply_text(response)
-
-    except ImportError as e:
-        log_with_context(logger, "error", f"Voice service import error: {e}")
-        await update.message.reply_text("🎵 Voice-Service nicht verfügbar.")
-    except Exception as e:
-        log_with_context(logger, "error", f"Audio processing error: {e}", user_id=user.id)
-        await update.message.reply_text(f"🎵 Fehler: {str(e)[:100]}")
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle regular messages"""
-    user = update.effective_user
-    if not is_allowed(user.id):
-        await update.message.reply_text("Sorry, you're not authorized.")
-        return
-
-    query = update.message.text
-
-    # Check if user is entering a new domain name for KB indexing
-    if context.user_data.get("awaiting_domain_name"):
-        await _handle_new_domain_input(update, context, query)
-        return
-
-    # Get user state from database
-    state = get_user_state(user.id)
-    session_id = state["session_id"]
-    namespace = state["namespace"]
-    role = state["role"]
-
-    # Create session if none exists - track for context loading
-    is_session_start = False
-    if not session_id:
-        session_id = str(uuid.uuid4())[:8]
-        save_user_state(user.id, session_id=session_id)
-        is_session_start = True  # Phase 20: Triggers full context loading
-        log_with_context(logger, "info", "New session started with context loading",
-                        user_id=user.id, session_id=session_id)
-
     # Show typing indicator
     await update.message.chat.send_action("typing")
 
     # Call Jarvis (pass user_id for context persistence)
-    result = call_jarvis_agent(query, session_id, namespace, role, user_id=user.id,
-                               is_session_start=is_session_start)
+    result = call_jarvis_agent(query, session_id, namespace, role, user_id=user.id)
 
     if "error" in result:
         await update.message.reply_text(f"Error: {result['error']}")
@@ -3638,61 +2649,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Add tool info
     tool_calls = result.get("tool_calls", [])
     tools_used = [tc.get("tool") for tc in tool_calls if tc.get("tool") != "no_tool_needed"]
-
-    # Auto-persist messages (Phase 19.1)
-    try:
-        from .services.auto_session_persist import get_auto_session_persist
-        persist = get_auto_session_persist()
-        usage = result.get("usage", {})
-        # Track user message
-        persist.track_message(
-            session_id=session_id,
-            user_id=user.id,
-            role="user",
-            content=query,
-            message_index=0
-        )
-        # Track assistant response
-        persist.track_message(
-            session_id=session_id,
-            user_id=user.id,
-            role="assistant",
-            content=answer,
-            message_index=1,
-            tool_calls=tools_used if tools_used else None,
-            token_count=usage.get("output_tokens")
-        )
-    except Exception as e:
-        log_with_context(logger, "warning", "Auto-persist failed", error=str(e))
-
-    # Phase 19.4: Auto-detect suggestions and outcomes for learning loop
-    try:
-        from .services.memory_lifecycle import get_memory_lifecycle_service
-        lifecycle = get_memory_lifecycle_service()
-
-        # Check if user message indicates outcome of previous suggestion
-        outcome = lifecycle.detect_outcome_in_message(query)
-        if outcome:
-            outcome_type, confidence = outcome
-            updated = lifecycle.auto_record_outcome(user.id, outcome_type, confidence)
-            if updated:
-                log_with_context(logger, "debug", "Auto-recorded outcome",
-                               outcome_type=outcome_type, user_id=user.id)
-
-        # Check if Jarvis response contains suggestion
-        suggestion = lifecycle.detect_suggestion_in_response(answer)
-        if suggestion:
-            lifecycle.auto_log_suggestion(
-                user_id=user.id,
-                session_id=session_id,
-                suggestion_text=suggestion,
-                context=query[:200],
-                confidence=0.7
-            )
-            log_with_context(logger, "debug", "Auto-logged suggestion", user_id=user.id)
-
-    except Exception as e:
-        log_with_context(logger, "debug", "Memory lifecycle auto-detect skipped", error=str(e))
 
     response = ""
     # Show role if different from requested (auto-detected)
@@ -3736,85 +2692,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(response, reply_markup=reply_markup)
     else:
         await update.message.reply_text(response)
-
-
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle photo messages - Vision support for Jarvis"""
-    import base64
-
-    user = update.effective_user
-    if not is_allowed(user.id):
-        await update.message.reply_text("Sorry, you're not authorized.")
-        return
-
-    # Get caption as query (or default prompt)
-    query = update.message.caption or "Was siehst du auf diesem Bild? Beschreibe es detailliert."
-
-    # Get user state
-    state = get_user_state(user.id)
-    session_id = state["session_id"]
-    namespace = state["namespace"]
-    role = state["role"]
-
-    if not session_id:
-        session_id = str(uuid.uuid4())[:8]
-        save_user_state(user.id, session_id=session_id)
-
-    # Show typing indicator
-    await update.message.chat.send_action("typing")
-
-    try:
-        # Download the photo (get largest size)
-        photo = update.message.photo[-1]  # Largest resolution
-        file = await context.bot.get_file(photo.file_id)
-
-        # Download to bytes
-        photo_bytes = await file.download_as_bytearray()
-
-        # Convert to base64
-        photo_base64 = base64.b64encode(bytes(photo_bytes)).decode('utf-8')
-
-        # Determine media type (Telegram photos are usually JPEG)
-        media_type = "image/jpeg"
-
-        # Prepare images for API
-        images = [{
-            "type": "base64",
-            "media_type": media_type,
-            "data": photo_base64
-        }]
-
-        log_with_context(logger, "info", "Processing photo with vision",
-                        user_id=user.id, photo_size=len(photo_bytes))
-
-        # Call Jarvis with image
-        result = call_jarvis_agent(
-            query=query,
-            session_id=session_id,
-            namespace=namespace,
-            role=role,
-            user_id=user.id,
-            images=images
-        )
-
-        if "error" in result:
-            await update.message.reply_text(f"Error: {result['error']}")
-            return
-
-        answer = result.get("answer", "Keine Antwort erhalten.")
-        if not answer or not str(answer).strip():
-            answer = "Ich konnte das Bild nicht analysieren."
-
-        # Format response
-        response = answer
-        if len(response) > 4000:
-            response = response[:3997] + "..."
-
-        await update.message.reply_text(response)
-
-    except Exception as e:
-        log_with_context(logger, "error", "Photo processing failed", error=str(e))
-        await update.message.reply_text(f"Fehler bei der Bildverarbeitung: {str(e)[:100]}")
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3867,7 +2744,6 @@ def _build_application() -> Application:
     application.add_handler(CommandHandler("decide", decide))
     application.add_handler(CommandHandler("outcome", outcome))
     application.add_handler(CommandHandler("patterns", patterns))
-    application.add_handler(CommandHandler("memory", memory_health))
     application.add_handler(CommandHandler("remember", remember))
     application.add_handler(CommandHandler("forget", forget))
     application.add_handler(CommandHandler("self", self_reflect))
@@ -3885,16 +2761,9 @@ def _build_application() -> Application:
     application.add_handler(CommandHandler("energy", energy))
     application.add_handler(CommandHandler("feedback", feedback))
     application.add_handler(CommandHandler("refresh", refresh_capabilities))
-    # U1/U2: Tool Discovery & Self-Diagnose
-    application.add_handler(CommandHandler("capabilities", capabilities_command))
-    application.add_handler(CommandHandler("diagnose", diagnose_command))
     application.add_handler(CommandHandler("projects", projects))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))  # Vision support
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    application.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    application.add_handler(MessageHandler(filters.AUDIO, handle_audio))
-    application.add_handler(CommandHandler("voice", voice_settings))
 
     # Callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(handle_callback))
