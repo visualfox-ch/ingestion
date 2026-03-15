@@ -20,6 +20,7 @@ from .rate_limiter import rate_limit_dependency, get_rate_limit_stats, get_tier_
 from .observability import get_logger, log_with_context
 from .tracing import set_request_context, get_trace_context, generate_request_id, generate_trace_id, get_current_user_id
 from .models import ScopeRef
+from .domain_separation import get_default_scope
 
 logger = get_logger("jarvis.main")
 from .errors import register_exception_handlers, JarvisException, ErrorCode, wrap_external_error
@@ -350,7 +351,7 @@ def iter_txt_files(directory: Path):
 # =============================================================================
 class AgentRequest(BaseModel):
     query: str
-    namespace: str = "work_projektil"   # Deprecated: use scope instead
+    namespace: Optional[str] = None      # Deprecated: use scope instead
     scope: Optional[ScopeRef] = None    # New: replaces namespace
     session_id: Optional[str] = None
     user_id: Optional[str] = None
@@ -367,10 +368,19 @@ class AgentRequest(BaseModel):
     images: Optional[List[Dict[str, str]]] = None  # [{"type": "base64", "media_type": "image/jpeg", "data": "..."}]
 
     def get_scope(self) -> ScopeRef:
-        """Return scope, falling back to legacy namespace field."""
+        """Return scope, falling back to legacy namespace or channel defaults."""
         if self.scope is not None:
             return self.scope
-        return ScopeRef.from_legacy_namespace(self.namespace)
+
+        if self.namespace is not None and str(self.namespace).strip():
+            return ScopeRef.from_legacy_namespace(self.namespace)
+
+        default_scope = get_default_scope(self.source or "api")
+        return ScopeRef(
+            org=default_scope.get("org", "projektil"),
+            visibility=default_scope.get("visibility", "internal"),
+            owner=default_scope.get("owner", "michael_bohl"),
+        )
 
     def get_namespace(self) -> str:
         """Return the effective legacy namespace for backward-compatible code paths."""
@@ -384,7 +394,10 @@ class PhaseCompleteRequest(BaseModel):
 
 
 def _validate_agent_request(req: "AgentRequest") -> Optional[str]:
-    resolved_namespace = req.get_namespace() if (req.scope is not None or req.namespace) else None
+    if req.scope is None and req.namespace is not None and not str(req.namespace).strip():
+        return "namespace or scope is required"
+
+    resolved_namespace = req.get_namespace()
     if not req.query or not str(req.query).strip():
         return "query is required"
     if len(req.query) > 20000:
