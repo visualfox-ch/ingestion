@@ -220,6 +220,82 @@ def get_allowed_collections(namespace: str) -> List[str]:
     return NAMESPACES[namespace]["collections"]
 
 
+# ============ DB-driven Scope API (Release 1 additions) ============
+
+_scope_policy_cache: Dict[str, Dict] = {}
+
+
+def get_scope_policy(org: str, visibility: str) -> Dict:
+    """Load scope policy from DB (in-process cached per process).
+
+    Falls back to the hardcoded NAMESPACES dict when the scope_policy table
+    doesn't exist yet (pre-migration environments).
+    """
+    cache_key = f"{org}/{visibility}"
+    if cache_key in _scope_policy_cache:
+        return _scope_policy_cache[cache_key]
+
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT llm_allowed, cross_access_allowed, qdrant_collections "
+                "FROM scope_policy WHERE org=%s AND visibility=%s AND active=true",
+                (org, visibility),
+            )
+            row = cur.fetchone()
+        if row:
+            result = {
+                "llm_allowed": row[0],
+                "cross_access_allowed": row[1],
+                "qdrant_collections": row[2] if isinstance(row[2], list) else [],
+            }
+            _scope_policy_cache[cache_key] = result
+            return result
+    except Exception as e:
+        log_with_context(logger, "warning", "scope_policy DB lookup failed, using fallback", error=str(e))
+
+    # Fallback: derive from legacy NAMESPACES dict
+    from .models import _NAMESPACE_TO_SCOPE, _SCOPE_TO_NAMESPACE
+    legacy_ns = _SCOPE_TO_NAMESPACE.get((org, visibility))
+    if legacy_ns and legacy_ns in NAMESPACES:
+        ns_cfg = NAMESPACES[legacy_ns]
+        return {
+            "llm_allowed": ns_cfg["llm_allowed"],
+            "cross_access_allowed": ns_cfg["cross_access_allowed"],
+            "qdrant_collections": ns_cfg["collections"],
+        }
+    return {"llm_allowed": True, "cross_access_allowed": False, "qdrant_collections": []}
+
+
+def invalidate_scope_cache() -> None:
+    """Clear the in-process scope_policy cache (call after DB updates)."""
+    _scope_policy_cache.clear()
+
+
+def get_default_scope(channel: str) -> Dict[str, str]:
+    """Return the default scope dict for a given channel.
+
+    Reads from scope_defaults table; falls back to projektil/internal.
+    """
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT default_org, default_visibility, default_owner "
+                "FROM scope_defaults WHERE channel=%s AND active=true "
+                "ORDER BY user_id NULLS LAST, source_type NULLS LAST LIMIT 1",
+                (channel,),
+            )
+            row = cur.fetchone()
+        if row:
+            return {"org": row[0], "visibility": row[1], "owner": row[2]}
+    except Exception as e:
+        log_with_context(logger, "warning", "scope_defaults DB lookup failed, using fallback", error=str(e))
+
+    return {"org": "projektil", "visibility": "internal", "owner": "michael_bohl"}
+
+
 # ============ Access Statistics ============
 
 def get_access_stats(days: int = 7, namespace: str = None) -> Dict:
