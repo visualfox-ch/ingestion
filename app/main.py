@@ -2925,8 +2925,15 @@ def get_agent_uncertainty_latest():
 
 
 @app.get("/briefing")
-def get_briefing(namespace: str = "work_projektil", days: int = 1):
+def get_briefing(namespace: Optional[str] = None, days: int = 1):
     """Get a daily briefing using the agent"""
+    if namespace is None or not str(namespace).strip():
+        default_scope = get_default_scope("api")
+        namespace = ScopeRef(
+            org=default_scope.get("org", "projektil"),
+            visibility=default_scope.get("visibility", "internal"),
+            owner=default_scope.get("owner", "michael_bohl"),
+        ).to_legacy_namespace()
     result = agent.get_daily_briefing(namespace=namespace, days=days)
     return result
 
