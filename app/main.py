@@ -346,6 +346,10 @@ def iter_txt_files(directory: Path):
         if item.is_file() and item.suffix in (".txt", ".md"):
             yield item
 
+def now_iso() -> str:
+    """Return current UTC timestamp in ISO8601 format with Z suffix."""
+    return datetime.utcnow().isoformat() + "Z"
+
 # =============================================================================
 # /agent request model + helpers (stability)
 # =============================================================================
