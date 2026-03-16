@@ -3342,7 +3342,7 @@ def get_draft_history(limit: int = 10):
 class DriveSyncRequest(BaseModel):
     folder_id: Optional[str] = None
     limit: int = 50
-    namespace: str = "work_projektil"
+    namespace: Optional[str] = None
 
 
 @app.post("/n8n/drive/sync")
@@ -3363,10 +3363,18 @@ def n8n_drive_sync(req: DriveSyncRequest):
     Note: Requires Google Drive OAuth credentials in n8n.
     """
     from . import n8n_client
+    namespace = req.namespace
+    if not namespace:
+        default_scope = get_default_scope("api")
+        namespace = ScopeRef(
+            org=default_scope.get("org", "projektil"),
+            visibility=default_scope.get("visibility", "internal"),
+            owner=default_scope.get("owner", "michael_bohl"),
+        ).to_legacy_namespace()
     return n8n_client.trigger_drive_sync(
         folder_id=req.folder_id,
         limit=req.limit,
-        namespace=req.namespace
+        namespace=namespace
     )
 
 
@@ -3380,7 +3388,7 @@ def n8n_drive_status():
 class GmailSyncRequest(BaseModel):
     limit: int = 50
     batch_size: int = 50  # Dynamic batching: starts at 50, reduces on rate limits
-    namespace: str = "work_projektil"
+    namespace: Optional[str] = None
     days_back: int = 7
     ingest: bool = True
 
@@ -3408,6 +3416,15 @@ def n8n_gmail_sync(req: GmailSyncRequest):
     from . import n8n_client
     from datetime import datetime
     import hashlib
+
+    namespace = req.namespace
+    if not namespace:
+        default_scope = get_default_scope("api")
+        namespace = ScopeRef(
+            org=default_scope.get("org", "projektil"),
+            visibility=default_scope.get("visibility", "internal"),
+            owner=default_scope.get("owner", "michael_bohl"),
+        ).to_legacy_namespace()
 
     results = {
         "fetched": 0,
@@ -3477,7 +3494,7 @@ def n8n_gmail_sync(req: GmailSyncRequest):
             return results
 
         # Setup output directory
-        email_dir = PARSED_DIR / req.namespace / "email" / "inbox"
+        email_dir = PARSED_DIR / namespace / "email" / "inbox"
         email_dir.mkdir(parents=True, exist_ok=True)
 
         # Store each email as a text file
@@ -3523,7 +3540,7 @@ event_ts: {date}
         if req.ingest and results["stored"] > 0:
             try:
                 ingest_result = ingest_email_embeddings_namespace(
-                    req.namespace,
+                    namespace,
                     limit_files=results["stored"] + 10,
                     skip_existing=True
                 )
@@ -4085,7 +4102,7 @@ class ReviewDecision(BaseModel):
 
 @app.post("/consolidate/run")
 def run_consolidation_job(
-    namespace: str = "work_projektil",
+    namespace: Optional[str] = None,
     days: int = 7,
     min_person_mentions: int = 3,
     min_topic_mentions: int = 2,
@@ -4102,6 +4119,13 @@ def run_consolidation_job(
 
     Use dry_run=true to preview without creating proposals.
     """
+    if namespace is None or not str(namespace).strip():
+        default_scope = get_default_scope("api")
+        namespace = ScopeRef(
+            org=default_scope.get("org", "projektil"),
+            visibility=default_scope.get("visibility", "internal"),
+            owner=default_scope.get("owner", "michael_bohl"),
+        ).to_legacy_namespace()
     from . import consolidation
 
     result = consolidation.run_consolidation(
@@ -4774,7 +4798,7 @@ class DriveDocumentIngest(BaseModel):
     owner: Optional[str] = None
     modified_at: Optional[str] = None
     parents: Optional[str] = None  # JSON string of parent folder IDs
-    namespace: str = "work_projektil"
+    namespace: Optional[str] = None
 
 
 @app.post("/ingest/drive")
@@ -4807,6 +4831,15 @@ def ingest_drive_document(doc: DriveDocumentIngest):
     content_hash = hashlib.sha256(doc.text_content.encode()).hexdigest()[:16]
     doc_id = f"drive_{doc.file_id}_{content_hash}"
 
+    namespace = doc.namespace
+    if not namespace:
+        default_scope = get_default_scope("api")
+        namespace = ScopeRef(
+            org=default_scope.get("org", "projektil"),
+            visibility=default_scope.get("visibility", "internal"),
+            owner=default_scope.get("owner", "michael_bohl"),
+        ).to_legacy_namespace()
+
     # Parse parents if provided
     parent_folders = []
     if doc.parents:
@@ -4826,7 +4859,7 @@ def ingest_drive_document(doc: DriveDocumentIngest):
         "web_link": doc.web_link or "",
         "owner": doc.owner or "",
         "parent_folders": parent_folders,
-        "namespace": doc.namespace,
+        "namespace": namespace,
         "modified_at": doc.modified_at or "",
         "ingested_at": datetime.now().isoformat(),
         "content_hash": content_hash,
@@ -4877,7 +4910,7 @@ def ingest_drive_document(doc: DriveDocumentIngest):
                 embedding = llm.get_embedding(chunk["text"])
                 if embedding:
                     upsert_result = upsert_vectors(
-                        collection=f"jarvis_{doc.namespace}",
+                        collection=f"jarvis_{namespace}",
                         vectors=[embedding],
                         payloads=[{**chunk_metadata, "text": chunk["text"]}],
                         ids=[chunk_id]
@@ -4900,7 +4933,7 @@ def ingest_drive_document(doc: DriveDocumentIngest):
             embedding = llm.get_embedding(text)
             if embedding:
                 upsert_result = upsert_vectors(
-                    collection=f"jarvis_{doc.namespace}",
+                        collection=f"jarvis_{namespace}",
                     vectors=[embedding],
                     payloads=[{**metadata, "text": text}],
                     ids=[doc_id]
@@ -4938,7 +4971,7 @@ def ingest_drive_document(doc: DriveDocumentIngest):
 
 @app.get("/drive/documents")
 def list_drive_documents(
-    namespace: str = "work_projektil",
+    namespace: Optional[str] = None,
     doc_type: str = None,
     limit: int = 50
 ):
@@ -4950,6 +4983,13 @@ def list_drive_documents(
         doc_type: Filter by doc_type (doc, sheet, slides, pdf, text)
         limit: Maximum results
     """
+    if namespace is None or not str(namespace).strip():
+        default_scope = get_default_scope("api")
+        namespace = ScopeRef(
+            org=default_scope.get("org", "projektil"),
+            visibility=default_scope.get("visibility", "internal"),
+            owner=default_scope.get("owner", "michael_bohl"),
+        ).to_legacy_namespace()
     try:
         from qdrant_client import QdrantClient
         from qdrant_client.models import Filter, FieldCondition, MatchValue
@@ -5011,7 +5051,7 @@ def list_drive_documents(
 @app.get("/drive/search")
 def search_drive_documents(
     query: str,
-    namespace: str = "work_projektil",
+    namespace: Optional[str] = None,
     doc_type: str = None,
     limit: int = 10
 ):
@@ -5024,6 +5064,13 @@ def search_drive_documents(
         doc_type: Filter by doc_type
         limit: Maximum results
     """
+    if namespace is None or not str(namespace).strip():
+        default_scope = get_default_scope("api")
+        namespace = ScopeRef(
+            org=default_scope.get("org", "projektil"),
+            visibility=default_scope.get("visibility", "internal"),
+            owner=default_scope.get("owner", "michael_bohl"),
+        ).to_legacy_namespace()
     try:
         from . import llm
         from qdrant_client import QdrantClient
