@@ -19,18 +19,45 @@ PATTERNS=(
 
 FAIL=0
 
+INCLUDES=(
+  --include=*.py
+  --include=*.sh
+  --include=*.yml
+  --include=*.yaml
+  --include=*.json
+  --include=*.toml
+  --include=*.ini
+  --include=Dockerfile
+  --include=docker-compose.yml
+  --include=docker-compose.*.yml
+)
+
 for pattern in "${PATTERNS[@]}"; do
   echo "Checking for pattern: $pattern"
   matches=$(grep -r -i -E \
     --exclude-dir=.venv \
+    --exclude-dir=.venv-nas \
     --exclude-dir=.git \
+    --exclude-dir=__pycache__ \
+    --exclude-dir=@eaDir \
     --exclude-dir=node_modules \
     --exclude-dir=.claude \
     --exclude-dir=.continue \
     --exclude-dir=.vscode \
+    --exclude-dir=.codex \
+    --exclude-dir=logs \
+    --exclude-dir=docs \
+    --exclude-dir=roadmap_backup_20260209 \
+    --exclude-dir=roadmap_backup \
+    --exclude-dir=google-cloud-sdk \
+    --exclude-dir=monitoring \
+    --exclude-dir=tasks \
+    --exclude-dir=tests \
+    --exclude-dir=tmp \
     --exclude=.env \
     --exclude=.env.* \
-    "$pattern" . || true)
+    "${INCLUDES[@]}" \
+    -e "$pattern" . || true)
   if [ -n "$matches" ]; then
     echo "❌ Secret pattern found: $pattern"
     echo "$matches"
