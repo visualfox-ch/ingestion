@@ -98,6 +98,58 @@ def test_agent_accepts_scope_payload(monkeypatch):
     assert call_log[0]["scope"].visibility == "private"
 
 
+def test_agent_accepts_missing_namespace_with_api_default_scope(monkeypatch):
+    call_log = []
+    _patch_agent_dependencies(monkeypatch, call_log)
+    monkeypatch.setattr(
+        "app.main.get_default_scope",
+        lambda source: {"org": "projektil", "visibility": "internal", "owner": "michael_bohl"},
+    )
+
+    resp = client.post(
+        "/agent",
+        json={
+            "query": "contract test api default",
+            "stream": False,
+            "source": "api",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("answer") == "ok"
+    assert len(call_log) == 1
+    assert call_log[0]["namespace"] == "work_projektil"
+    assert call_log[0]["scope"].org == "projektil"
+    assert call_log[0]["scope"].visibility == "internal"
+
+
+def test_agent_accepts_missing_namespace_with_telegram_default_scope(monkeypatch):
+    call_log = []
+    _patch_agent_dependencies(monkeypatch, call_log)
+    monkeypatch.setattr(
+        "app.main.get_default_scope",
+        lambda source: {"org": "personal", "visibility": "private", "owner": "michael_bohl"},
+    )
+
+    resp = client.post(
+        "/agent",
+        json={
+            "query": "contract test telegram default",
+            "stream": False,
+            "source": "telegram",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("answer") == "ok"
+    assert len(call_log) == 1
+    assert call_log[0]["namespace"] == "private"
+    assert call_log[0]["scope"].org == "personal"
+    assert call_log[0]["scope"].visibility == "private"
+
+
 def test_agent_rejects_missing_namespace_and_scope():
     resp = client.post(
         "/agent",
