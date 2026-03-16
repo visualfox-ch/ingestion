@@ -161,7 +161,7 @@ def get_conversation_history(
 
 def get_session_info(session_id: str) -> Optional[Dict[str, Any]]:
     """Get session metadata - queries Postgres"""
-    with pg.get_cursor() as cur:
+    with pg.get_dict_cursor() as cur:
         cur.execute("SELECT * FROM conversation WHERE session_id = %s", (session_id,))
         row = cur.fetchone()
         return dict(row) if row else None
@@ -169,7 +169,7 @@ def get_session_info(session_id: str) -> Optional[Dict[str, Any]]:
 
 def list_sessions(namespace: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
     """List recent conversation sessions - queries Postgres"""
-    with pg.get_cursor() as cur:
+    with pg.get_dict_cursor() as cur:
         if namespace:
             cur.execute("""
                 SELECT * FROM conversation
