@@ -2545,7 +2545,14 @@ def ingest_email_embeddings_namespace(ns: str, limit_files: int = 100, skip_exis
     }
 
 @app.post("/ingest_email_embeddings")
-def ingest_email_embeddings(namespace: str = "work_projektil", limit_files: int = 100, skip_existing: bool = True):
+def ingest_email_embeddings(namespace: Optional[str] = None, limit_files: int = 100, skip_existing: bool = True):
+    if namespace is None or not str(namespace).strip():
+        default_scope = get_default_scope("api")
+        namespace = ScopeRef(
+            org=default_scope.get("org", "projektil"),
+            visibility=default_scope.get("visibility", "internal"),
+            owner=default_scope.get("owner", "michael_bohl"),
+        ).to_legacy_namespace()
     return ingest_email_embeddings_namespace(namespace, limit_files=limit_files, skip_existing=skip_existing)
 
 @app.get("/ingest_history")
