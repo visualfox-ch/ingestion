@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from collections import defaultdict
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class ContextToolLearner:
     """
 
     def __init__(self):
-        pass  # Uses postgres_state.get_cursor() for DB access
+        pass  # Uses postgres_state cursor helpers for DB access
 
     def extract_keywords(self, text: str) -> List[str]:
         """Extract meaningful keywords from text."""
@@ -261,7 +261,7 @@ class ContextToolLearner:
         Shows the most reliable context → tool associations.
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     SELECT context_keyword, tool_name, occurrence_count,
                            success_rate, avg_duration_ms, last_seen_at
@@ -304,7 +304,7 @@ class ContextToolLearner:
         Helps understand when a tool is most useful.
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     SELECT context_keyword, occurrence_count, success_rate, avg_duration_ms
                     FROM context_tool_mapping
@@ -345,7 +345,7 @@ class ContextToolLearner:
         Returns session type (coding, planning, research, etc.) with confidence.
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Get session type patterns
                 cur.execute("""
                     SELECT session_type, indicators, tool_preferences, confidence
