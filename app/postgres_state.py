@@ -60,8 +60,9 @@ def _init_pool() -> None:
                     port=POSTGRES_PORT,
                     database=POSTGRES_DB,
                     user=POSTGRES_USER,
-                    password=POSTGRES_PASSWORD,
-                    cursor_factory=RealDictCursor
+                    password=POSTGRES_PASSWORD
+                    # Note: cursor_factory=RealDictCursor removed
+                    # Use get_dict_cursor() for dict-style access
                 )
 
 
@@ -73,7 +74,7 @@ def get_pool():
 
 @contextmanager
 def get_conn():
-    """Get a database connection with RealDictCursor (context manager with guaranteed cleanup)."""
+    """Get a database connection (context manager with guaranteed cleanup)."""
     _init_pool()
     metrics = get_pool_metrics("postgres_state")
     
@@ -133,10 +134,33 @@ def close_pool():
 
 @contextmanager
 def get_cursor():
-    """Context manager for database cursor with auto-commit"""
+    """Context manager for database cursor with auto-commit.
+
+    Returns regular tuples - use index access: row[0], row[1], etc.
+    For dict-style access, use get_dict_cursor() instead.
+    """
     with get_conn() as conn:
         try:
             with conn.cursor() as cur:
+                timeout_ms = int(os.environ.get("DB_STATEMENT_TIMEOUT_MS", "30000"))
+                cur.execute(f"SET statement_timeout = {timeout_ms}")
+                yield cur
+                conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+@contextmanager
+def get_dict_cursor():
+    """Context manager for database cursor with RealDictCursor.
+
+    Returns dict-like rows - use key access: row["column_name"].
+    For index-based access, use get_cursor() instead.
+    """
+    with get_conn() as conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 timeout_ms = int(os.environ.get("DB_STATEMENT_TIMEOUT_MS", "30000"))
                 cur.execute(f"SET statement_timeout = {timeout_ms}")
                 yield cur

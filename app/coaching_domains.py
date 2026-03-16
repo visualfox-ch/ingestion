@@ -17,6 +17,7 @@ from datetime import datetime
 
 from .observability import get_logger, log_with_context
 from .knowledge_db import get_conn
+from .models import ScopeRef
 
 logger = get_logger("jarvis.domains")
 
@@ -34,12 +35,19 @@ class CoachingDomain:
     description: str
     role_id: str  # Reference to roles.py
     persona_id: str  # Reference to persona.py
-    knowledge_namespace: str  # Qdrant namespace
+    knowledge_namespace: str  # Deprecated: use scope_org + scope_visibility
     tools_enabled: List[str] = field(default_factory=list)
     greeting: str = ""
     context_prompt: str = ""  # Domain-specific system prompt addition
     keywords: List[str] = field(default_factory=list)  # Auto-detection keywords
     icon: str = ""  # Emoji for display
+    scope_org: str = "projektil"      # New: replaces knowledge_namespace org part
+    scope_visibility: str = "internal"  # New: replaces knowledge_namespace visibility part
+
+    @property
+    def scope(self) -> ScopeRef:
+        """Return ScopeRef for this domain."""
+        return ScopeRef(org=self.scope_org, visibility=self.scope_visibility)
 
 
 # ============ Default Domains ============
@@ -52,6 +60,8 @@ DEFAULT_DOMAINS: Dict[str, Dict] = {
         "role_id": "assistant",
         "persona_id": "micha_default",
         "knowledge_namespace": "work_projektil",
+        "scope_org": "projektil",
+        "scope_visibility": "internal",
         "tools_enabled": ["web_search", "search_emails", "search_chats", "calendar_today", "calendar_create"],
         "greeting": "Wie kann ich dir helfen?",
         "context_prompt": "",
@@ -61,46 +71,69 @@ DEFAULT_DOMAINS: Dict[str, Dict] = {
     "linkedin": {
         "id": "linkedin",
         "name": "LinkedIn Coach",
-        "description": "Content-Erstellung und Profil-Optimierung für LinkedIn",
+        "description": "Content-Erstellung fuer LinkedIn mit persoenlicher Stimme und Anti-AI-Voice",
         "role_id": "writer",
         "persona_id": "micha_linkedin",
         "knowledge_namespace": "work_projektil",
-        "tools_enabled": ["web_search"],
-        "greeting": "LinkedIn-Zeit! Was möchtest du erstellen oder optimieren?",
+        "scope_org": "projektil",
+        "scope_visibility": "internal",
+        "tools_enabled": [
+            "linkedin_generate_content",
+            "linkedin_improve_draft",
+            "linkedin_check_ai_voice",
+            "linkedin_suggest_topics",
+            "linkedin_get_style_examples",
+            "linkedin_get_playbook",
+            "linkedin_save_to_playbook",
+            "linkedin_check_save_confidence",
+            "linkedin_record_save_feedback",
+            "search_linkedin_knowledge",
+            "web_search"
+        ],
+        "greeting": "LinkedIn-Zeit! Was moechtest du erstellen - Post, Kommentar, oder Repost?",
         "context_prompt": """
-Du bist ein LinkedIn Content Coach. Dein Fokus:
+Du bist Michas LinkedIn Coach mit Fokus auf authentischen, Anti-AI Content.
 
-1. **Content-Formate:**
-   - Carousel Posts (mit Hook + Story + CTA)
-   - Text-Posts mit Storytelling
-   - Polls für Engagement
-   - Comments für Sichtbarkeit
+**Content Pillars:**
+- AI & Automation
+- Media-Tech
+- Entrepreneurship
+- Tech Leadership
 
-2. **Best Practices:**
-   - Erste Zeile = Hook (Stopper)
-   - Persönliche Stories > generische Tipps
-   - 1 Idee pro Post
-   - CTA am Ende
+**Arbeitsweise:**
+1. Bei neuen Anfragen: Nutze `linkedin_generate_content` mit coach_mode=true
+2. Stelle Fragen zu Ziel, Audience, Key Points
+3. Generiere Draft mit coach_mode=false
+4. Pruefe mit `linkedin_check_ai_voice`
+5. Verbessere mit `linkedin_improve_draft` falls noetig
 
-3. **Profil-Optimierung:**
-   - Headline mit Value Proposition
-   - About-Section als Mini-Pitch
-   - Featured Section strategisch nutzen
+**Anti-AI-Voice Regeln:**
+VERBOTEN: "Let's dive in", "game-changer", "leverage", "synergy", "thought leader", "passionate about", "Thrilled to share"
+STATTDESSEN: Konkrete Beispiele, persoenliche Erfahrungen, direkte Sprache
 
-4. **Output-Format für Posts:**
-   ---
-   **Hook:** [Erste Zeile]
+**Proaktives Lernen:**
+Erkenne selbststaendig aus dem Kontext, was wichtig ist:
 
-   **Story/Content:**
-   [Hauptinhalt]
+1. **Automatisch speichern** (wenn du sicher bist):
+   - Micha teilt einen eigenen Post → speichere als example
+   - Micha korrigiert dich → speichere als style_element/avoid
+   - Micha erwaehnt einen Kontakt mit Kontext → speichere als network_contact
 
-   **CTA:**
-   [Call-to-Action]
+2. **Nachfragen** (wenn du unsicher bist):
+   - "Soll ich mir das als [Typ] merken?"
+   - "Ist das ein wiederkehrendes Muster oder einmalig?"
+   - "Verstehe ich richtig, dass du generell [X] bevorzugst?"
 
-   **Hashtags:** [3-5 relevante]
-   ---
+3. **Ueber Zeit lernen:**
+   - Je mehr Kontext du hast, desto sicherer wirst du
+   - Wenn Micha "ja" sagt → lerne dass dieser Typ wichtig ist
+   - Wenn Micha "nein" sagt → lerne was NICHT gespeichert werden soll
+
+**Ziel:** Mit der Zeit fragst du weniger und handelst mehr, weil du Michas Praeferenzen kennst.
+
+**Sprache:** Deutsch oder Englisch je nach Kontext/Audience
 """,
-        "keywords": ["linkedin", "post", "content", "profil", "carousel", "engagement"],
+        "keywords": ["linkedin", "post", "content", "kommentar", "comment", "repost", "engagement", "hook"],
         "icon": "💼"
     },
     "communication": {
@@ -110,6 +143,8 @@ Du bist ein LinkedIn Content Coach. Dein Fokus:
         "role_id": "coach",
         "persona_id": "micha_coach",
         "knowledge_namespace": "work_projektil",
+        "scope_org": "projektil",
+        "scope_visibility": "internal",
         "tools_enabled": ["search_emails", "search_chats"],
         "greeting": "Lass uns an deiner Kommunikation arbeiten. Was steht an?",
         "context_prompt": """
@@ -157,6 +192,8 @@ Du bist ein Communication Coach. Dein Fokus:
         "role_id": "coach",
         "persona_id": "micha_nutrition",
         "knowledge_namespace": "private",
+        "scope_org": "personal",
+        "scope_visibility": "private",
         "tools_enabled": ["web_search"],
         "greeting": "Zeit für Ernährungsfragen! Was beschäftigt dich?",
         "context_prompt": """
@@ -204,6 +241,8 @@ Du bist ein Nutrition Coach. Dein Fokus:
         "role_id": "coach",
         "persona_id": "micha_fitness",
         "knowledge_namespace": "private",
+        "scope_org": "personal",
+        "scope_visibility": "private",
         "tools_enabled": ["web_search", "calendar_today"],
         "greeting": "Fitness-Zeit! Was ist dein Ziel oder deine Frage?",
         "context_prompt": """
@@ -252,6 +291,8 @@ Du bist ein Fitness Coach. Dein Fokus:
         "role_id": "coach",
         "persona_id": "micha_coach",
         "knowledge_namespace": "work_projektil",
+        "scope_org": "projektil",
+        "scope_visibility": "internal",
         "tools_enabled": ["search_emails", "search_chats", "calendar_today", "web_search"],
         "greeting": "Lass uns über deine Arbeit sprechen. Was beschäftigt dich?",
         "context_prompt": """
@@ -297,6 +338,8 @@ Du bist ein Work/Karriere Coach. Dein Fokus:
         "role_id": "analyst",
         "persona_id": "micha_ideas",
         "knowledge_namespace": "work_projektil",
+        "scope_org": "projektil",
+        "scope_visibility": "internal",
         "tools_enabled": ["web_search"],
         "greeting": "Ideen-Session! Was willst du durchdenken?",
         "context_prompt": """
@@ -347,6 +390,8 @@ Du bist ein Ideas Buddy / Brainstorming Partner. Dein Fokus:
         "role_id": "writer",
         "persona_id": "micha_presentation",
         "knowledge_namespace": "work_projektil",
+        "scope_org": "projektil",
+        "scope_visibility": "internal",
         "tools_enabled": ["web_search", "search_emails"],
         "greeting": "Präsentations-Coaching! Was präsentierst du?",
         "context_prompt": """
@@ -409,6 +454,8 @@ Du bist ein Presentation Coach. Dein Fokus:
         "role_id": "analyst",
         "persona_id": "micha_debug",
         "knowledge_namespace": "work_visualfox",
+        "scope_org": "visualfox",
+        "scope_visibility": "internal",
         "tools_enabled": ["read_project_file", "search_knowledge"],
         "greeting": "Mediaserver-Modus! Was debuggen wir heute - Pixera, NAS oder Grafana?",
         "context_prompt": """

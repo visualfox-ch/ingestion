@@ -912,3 +912,260 @@ body {
         border: 1px solid #ccc;
     }
 }
+
+/* =============================================================================
+   HEALTH STATUS SECTION (OpenClaw Enhancement)
+   ============================================================================= */
+
+.health-section {
+    margin-bottom: 24px;
+}
+
+.health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+}
+
+.health-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.health-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.health-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--accent-green);
+    transition: background 0.3s ease;
+}
+
+.health-card.degraded::before {
+    background: var(--accent-yellow);
+}
+
+.health-card.unhealthy::before {
+    background: var(--accent-red);
+}
+
+.health-icon {
+    font-size: 1.5rem;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+}
+
+.health-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.health-title {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.health-value {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.health-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-green);
+    box-shadow: 0 0 8px var(--accent-green);
+    animation: pulse 2s infinite;
+}
+
+.health-indicator.degraded {
+    background: var(--accent-yellow);
+    box-shadow: 0 0 8px var(--accent-yellow);
+}
+
+.health-indicator.unhealthy {
+    background: var(--accent-red);
+    box-shadow: 0 0 8px var(--accent-red);
+    animation: pulse-danger 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+@keyframes pulse-danger {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.2); }
+}
+
+/* =============================================================================
+   CONTAINER STATUS SECTION (OpenClaw Enhancement)
+   ============================================================================= */
+
+.container-section {
+    margin-bottom: 24px;
+}
+
+.container-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.container-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--accent-green);
+    transition: background 0.2s ease;
+}
+
+.container-card:hover {
+    background: rgba(51, 65, 85, 0.8);
+}
+
+.container-card.restarting {
+    border-left-color: var(--accent-yellow);
+}
+
+.container-card.exited {
+    border-left-color: var(--accent-red);
+}
+
+.container-card.unhealthy {
+    border-left-color: var(--accent-red);
+}
+
+.container-name {
+    flex: 1;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.container-status {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--accent-green);
+}
+
+.container-status.restarting {
+    background: rgba(234, 179, 8, 0.2);
+    color: var(--accent-yellow);
+}
+
+.container-status.exited {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--accent-red);
+}
+
+.container-status.unhealthy {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--accent-red);
+}
+
+/* =============================================================================
+   TOOL PROFILES SECTION (OpenClaw Prep)
+   ============================================================================= */
+
+.tools-section {
+    margin-bottom: 24px;
+}
+
+.tools-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 12px;
+}
+
+.tool-card {
+    padding: 14px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    border: 1px solid var(--border-color);
+}
+
+.tool-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.tool-name {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.tool-status {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.tool-status.enabled {
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--accent-green);
+}
+
+.tool-status.disabled {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--accent-red);
+}
+
+.tool-status.approval {
+    background: rgba(234, 179, 8, 0.2);
+    color: var(--accent-yellow);
+}
+
+.tool-category {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* Responsive adjustments for new sections */
+@media (max-width: 768px) {
+    .health-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .container-grid {
+        grid-template-columns: 1fr;
+        max-height: 200px;
+    }
+}

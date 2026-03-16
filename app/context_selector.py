@@ -85,11 +85,15 @@ def select_contexts_to_inject(
     """
     if not include_context or not user_id:
         return set()
-    
+
     contexts: Set[str] = set()
-    
+
     # Always inject: basic coaching style (lightweight)
     contexts.add("coach_os")
+
+    # Always inject: session/conversation history for continuity (Phase 19)
+    # This ensures Jarvis remembers past conversations automatically
+    contexts.add("session")
     
     # Selective injection based on query analysis
     if detect_self_awareness_needed(query):

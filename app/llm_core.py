@@ -16,6 +16,31 @@ from .langfuse_integration import (
     log_chat_trace, log_rewrite_trace, log_profile_extraction_trace
 )
 
+# Cost tracking integration
+def _track_cost(model: str, input_tokens: int, output_tokens: int, feature: str, user_id: str = "system"):
+    """Track LLM cost in both cost_tracker and economic_engine."""
+    try:
+        from .services.cost_tracker import track_llm_cost
+        track_llm_cost(model, input_tokens, output_tokens, feature, user_id)
+    except Exception:
+        pass  # Don't fail LLM calls if cost tracking fails
+
+    # Also track in economic engine for sustainability metrics
+    try:
+        from .services.economic_engine import get_economic_engine, CostType
+        engine = get_economic_engine()
+        # Calculate cost (simplified - actual pricing in cost_tracker)
+        cost_usd = (input_tokens * 0.003 + output_tokens * 0.015) / 1000  # Approximate Claude pricing
+        engine.record_cost(
+            cost_type=CostType.LLM_TOKENS,
+            amount_usd=cost_usd,
+            feature=feature,
+            user_id=user_id,
+            description=f"{model}: {input_tokens} in, {output_tokens} out",
+        )
+    except Exception:
+        pass  # Silent - logger not yet defined, and this is non-critical
+
 logger = get_logger("jarvis.llm")
 
 
@@ -126,7 +151,7 @@ Examples:
 def rewrite_query_for_search(
     query: str,
     conversation_history: List[Dict[str, str]],
-    model: str = "claude-3-5-haiku-20250110"
+    model: str = "claude-haiku-4-5"
 ) -> str:
     """
     Rewrite a follow-up query to be standalone for semantic search.
@@ -183,7 +208,12 @@ def rewrite_query_for_search(
         metrics.timing("rewrite_latency_ms", duration_ms)
         metrics.inc("rewrite_tokens_in", response.usage.input_tokens)
         metrics.inc("rewrite_tokens_out", response.usage.output_tokens)
+        _track_cost(model, response.usage.input_tokens, response.usage.output_tokens, "rewrite")
 
+        # Guard against empty response content
+        if not response.content:
+            log_with_context(logger, "warning", "Empty LLM response content for rewrite")
+            return query
         rewritten = response.content[0].text.strip()
 
         # Sanity check: don't use if it's way longer or empty
@@ -649,7 +679,11 @@ My question: {query}"""
                 client, model, max_tokens=max_tokens,
                 system=system_prompt, messages=messages
             )
-            response_text = response.content[0].text
+            # Guard against empty response content (consistent with streaming fallback)
+            if response.content:
+                response_text = response.content[0].text
+            else:
+                response_text = ""
 
         duration_ms = (time.time() - start_time) * 1000
         metrics.timing("chat_latency_ms", duration_ms)
@@ -658,6 +692,7 @@ My question: {query}"""
         metrics.inc("chat_tokens_out", response.usage.output_tokens)
         metrics.inc("llm_api_calls_total")
         metrics.timing("llm_response_time_ms", duration_ms)
+        _track_cost(model, response.usage.input_tokens, response.usage.output_tokens, "chat", user_id)
 
         log_with_context(logger, "info", "Chat generation complete",
                         latency_ms=round(duration_ms, 1),
@@ -790,7 +825,7 @@ def extract_profile_from_messages(
     person_name: str,
     messages: List[Dict[str, Any]],
     existing_profile: Dict[str, Any] = None,
-    model: str = "claude-3-5-haiku-20241022"
+    model: str = "claude-haiku-4-5"
 ) -> Dict[str, Any]:
     """
     Extract personality profile from chat messages using LLM.
@@ -864,6 +899,16 @@ Extrahiere das Persönlichkeitsprofil als JSON:"""
         metrics.inc("profile_extractions")
         metrics.inc("profile_extraction_tokens_in", response.usage.input_tokens)
         metrics.inc("profile_extraction_tokens_out", response.usage.output_tokens)
+        _track_cost(model, response.usage.input_tokens, response.usage.output_tokens, "profile_extraction")
+
+        # Guard against empty response content
+        if not response.content:
+            log_with_context(logger, "warning", "Empty LLM response content for profile extraction")
+            return {
+                "status": "error",
+                "error": "LLM returned empty response",
+                "recoverable": True
+            }
 
         # Parse JSON response
         response_text = response.content[0].text.strip()
@@ -1013,7 +1058,7 @@ def extract_profile_with_retry(
     messages: List[Dict[str, Any]],
     existing_profile: Dict[str, Any] = None,
     max_retries: int = 2,
-    model: str = "claude-3-5-haiku-20241022"
+    model: str = "claude-haiku-4-5"
 ) -> Dict[str, Any]:
     """
     Extract profile with retry logic for transient failures.

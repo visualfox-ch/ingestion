@@ -10,7 +10,7 @@ Phase 0 tests (Feb 4, 2026):
 
 import pytest
 from datetime import datetime
-from ingestion.app.confidence_scorer import (
+from app.confidence_scorer import (
     JarvisConfidenceScorer,
     ConfidenceLevel,
     CodeChange,
@@ -99,9 +99,9 @@ class TestConfidenceScorer:
     
     def test_feedback_update(self):
         """Test track record feedback update."""
-        
+
         initial_history = {
-            "config": {"success_rate": 0.80, "n_samples": 10}
+            "config": {"success_rate": 0.80, "n_samples": 10, "successes": 8, "failures": 2}
         }
         
         scorer = JarvisConfidenceScorer(feedback_history=initial_history)

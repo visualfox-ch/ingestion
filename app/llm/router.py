@@ -46,71 +46,91 @@ class TaskProfile:
 class LLMRouter:
     """
     Intelligent router for optimal LLM selection.
-    
+
     Strategy:
-    - Low complexity → Haiku (ultra-fast, cheapest)
-    - Medium → Sonnet (best balance) or GPT-4o
-    - High complexity → Opus (best reasoning) or GPT-4-turbo (best code)
+    - Low complexity → Haiku (ultra-fast, cheapest) + effort: low
+    - Medium → Sonnet (best balance) + effort: medium
+    - High complexity → Opus/Sonnet (best reasoning) + effort: high
     """
-    
-    # Default routing matrix: (intent, complexity) → model_name
+
+    # Default routing matrix: (intent, complexity) → model_name + effort
     ROUTING_TABLE = {
-        # Low complexity - minimize cost
+        # Low complexity - minimize cost & latency
         (TaskIntent.SEARCH, Complexity.LOW): {
-            "model": "claude-3-5-haiku-20241022",
+            "model": "claude-haiku-4-5",
             "provider": "anthropic",
             "max_tokens": 256,
             "timeout": 3,
+            "effort": "low",
         },
         (TaskIntent.EXTRACT, Complexity.LOW): {
-            "model": "claude-3-5-haiku-20241022",
+            "model": "claude-haiku-4-5",
             "provider": "anthropic",
             "max_tokens": 512,
             "timeout": 5,
+            "effort": "low",
         },
-        
+        (TaskIntent.CHAT, Complexity.LOW): {
+            "model": "claude-haiku-4-5",
+            "provider": "anthropic",
+            "max_tokens": 512,
+            "timeout": 5,
+            "effort": "low",
+        },
+
         # Medium complexity - balance cost & quality
         (TaskIntent.CHAT, Complexity.MEDIUM): {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-6",
             "provider": "anthropic",
             "max_tokens": 2048,
             "timeout": 15,
+            "effort": "medium",
         },
         (TaskIntent.SUMMARIZE, Complexity.MEDIUM): {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-6",
             "provider": "anthropic",
             "max_tokens": 1024,
             "timeout": 10,
+            "effort": "medium",
         },
-        
+        (TaskIntent.EXTRACT, Complexity.MEDIUM): {
+            "model": "claude-sonnet-4-6",
+            "provider": "anthropic",
+            "max_tokens": 1024,
+            "timeout": 10,
+            "effort": "medium",
+        },
+
         # High complexity - optimize for quality
         (TaskIntent.ANALYZE, Complexity.HIGH): {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-6",
             "provider": "anthropic",
             "max_tokens": 2048,
             "timeout": 25,
+            "effort": "high",
         },
         (TaskIntent.REASON, Complexity.HIGH): {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-6",
             "provider": "anthropic",
             "max_tokens": 2048,
             "timeout": 25,
+            "effort": "high",
         },
         (TaskIntent.AGENT, Complexity.HIGH): {
-            "model": "claude-opus-4-20250514",
+            "model": "claude-opus-4-6",
             "provider": "anthropic",
-            "max_tokens": 2048,
-            "timeout": 30,
+            "max_tokens": 4096,
+            "timeout": 60,
+            "effort": "high",
         },
-        
-        # Code generation - GPT-4 Turbo is slightly better
+
+        # Code generation - GPT-4o or Claude
         (TaskIntent.CODE, Complexity.HIGH): {
             "model": "gpt-4o",
             "provider": "openai",
             "max_tokens": 4096,
             "timeout": 20,
         },
-        
         (TaskIntent.CODE, Complexity.MEDIUM): {
             "model": "gpt-4o-mini",
             "provider": "openai",
@@ -120,10 +140,11 @@ class LLMRouter:
 
         # Fallback
         None: {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": "claude-sonnet-4-6",
             "provider": "anthropic",
             "max_tokens": 2048,
             "timeout": 15,
+            "effort": "medium",
         },
     }
     
@@ -258,14 +279,14 @@ class LLMRouter:
             task_key = (task.intent, task.complexity)
             # Find anthropic alternative
             for key, config in LLMRouter.ROUTING_TABLE.items():
-                if (key != task_key and 
+                if (key != task_key and
                     config.get("provider") == "anthropic" and
-                    key[0] == task.intent):  # Same intent
+                    key and key[0] == task.intent):  # Same intent
                     return config
-            
+
             # Last resort
             return LLMRouter.ROUTING_TABLE[(TaskIntent.CHAT, Complexity.MEDIUM)]
-        
+
         # Fallback to OpenAI if available
         if "openai" in available_providers:
             return {
@@ -274,5 +295,5 @@ class LLMRouter:
                 "max_tokens": 2048,
                 "timeout": 15,
             }
-        
+
         raise ValueError("No LLM providers available")

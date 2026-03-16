@@ -52,8 +52,78 @@
 
         <!-- Main Content -->
         <main class="main-content">
+            <!-- Health Status Section (NEW) -->
+            <section class="section health-section">
+                <div class="section-header">
+                    <h2>System Health</h2>
+                    <span class="badge" id="health-status">--</span>
+                </div>
+                <div class="health-grid" id="health-grid">
+                    <div class="health-card" id="health-api">
+                        <div class="health-icon">🔌</div>
+                        <div class="health-info">
+                            <span class="health-title">API</span>
+                            <span class="health-value" id="health-api-value">--</span>
+                        </div>
+                        <div class="health-indicator healthy"></div>
+                    </div>
+                    <div class="health-card" id="health-db">
+                        <div class="health-icon">🗄️</div>
+                        <div class="health-info">
+                            <span class="health-title">Database</span>
+                            <span class="health-value" id="health-db-value">--</span>
+                        </div>
+                        <div class="health-indicator healthy"></div>
+                    </div>
+                    <div class="health-card" id="health-search">
+                        <div class="health-icon">🔍</div>
+                        <div class="health-info">
+                            <span class="health-title">Search</span>
+                            <span class="health-value" id="health-search-value">--</span>
+                        </div>
+                        <div class="health-indicator healthy"></div>
+                    </div>
+                    <div class="health-card" id="health-llm">
+                        <div class="health-icon">🤖</div>
+                        <div class="health-info">
+                            <span class="health-title">LLM</span>
+                            <span class="health-value" id="health-llm-value">--</span>
+                        </div>
+                        <div class="health-indicator healthy"></div>
+                    </div>
+                    <div class="health-card" id="health-telegram">
+                        <div class="health-icon">📱</div>
+                        <div class="health-info">
+                            <span class="health-title">Telegram</span>
+                            <span class="health-value" id="health-telegram-value">--</span>
+                        </div>
+                        <div class="health-indicator healthy"></div>
+                    </div>
+                    <div class="health-card" id="health-scheduler">
+                        <div class="health-icon">⏰</div>
+                        <div class="health-info">
+                            <span class="health-title">Scheduler</span>
+                            <span class="health-value" id="health-scheduler-value">--</span>
+                        </div>
+                        <div class="health-indicator healthy"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Container Status Section (NEW) -->
+            <section class="section container-section">
+                <div class="section-header">
+                    <h2>Containers</h2>
+                    <span class="badge" id="container-count">--</span>
+                </div>
+                <div class="container-grid" id="container-grid">
+                    <div class="empty-state" id="empty-containers">
+                        <p>Loading container status...</p>
+                    </div>
+                </div>
+            </section>
+
             <!-- Pending Approvals Section -->
-            <section class="section pending-section">
                 <div class="section-header">
                     <h2>Pending Approvals</h2>
                     <span class="badge" id="pending-count">0</span>

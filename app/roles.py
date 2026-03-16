@@ -1,9 +1,13 @@
 """
 Jarvis Role/Context System
 Defines different personas and modes for the agent.
+Now database-backed with fallback to hardcoded roles (Phase 21).
 """
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -15,6 +19,18 @@ class Role:
     greeting: str
     keywords: List[str]  # Keywords that trigger this role
     default_namespace: str = "work_projektil"
+
+
+# Try to use database-backed roles first
+_USE_DB_ROLES = True
+try:
+    from .services.dynamic_config import (
+        get_role_from_db, list_roles_from_db, detect_role_from_db,
+        record_role_usage, DynamicRole
+    )
+except ImportError:
+    _USE_DB_ROLES = False
+    logger.debug("Database roles not available, using hardcoded")
 
 
 # Available roles
@@ -401,12 +417,35 @@ Be curious, not confrontational. Help them discover their own blind spots gently
 
 
 def get_role(role_name: str) -> Optional[Role]:
-    """Get a role by name"""
+    """Get a role by name (database-first, fallback to hardcoded)"""
+    if _USE_DB_ROLES:
+        try:
+            db_role = get_role_from_db(role_name)
+            if db_role:
+                return Role(
+                    name=db_role.name,
+                    description=db_role.description,
+                    system_prompt_addon=db_role.system_prompt_addon,
+                    greeting=db_role.greeting,
+                    keywords=db_role.keywords,
+                    default_namespace=db_role.default_namespace
+                )
+        except Exception as e:
+            logger.debug(f"DB role lookup failed: {e}")
+
     return ROLES.get(role_name.lower())
 
 
 def list_roles() -> List[Dict[str, str]]:
-    """List all available roles"""
+    """List all available roles (database-first, fallback to hardcoded)"""
+    if _USE_DB_ROLES:
+        try:
+            db_roles = list_roles_from_db()
+            if db_roles:
+                return db_roles
+        except Exception as e:
+            logger.debug(f"DB role list failed: {e}")
+
     return [
         {
             "name": role.name,
@@ -421,7 +460,17 @@ def detect_role(query: str, current_role: str = "assistant") -> str:
     """
     Detect the most appropriate role based on query keywords.
     Returns the detected role name or current_role if no match.
+    Database-first with fallback to hardcoded (Phase 21).
     """
+    if _USE_DB_ROLES:
+        try:
+            detected = detect_role_from_db(query, current_role)
+            if detected != current_role:
+                return detected
+        except Exception as e:
+            logger.debug(f"DB role detection failed: {e}")
+
+    # Fallback to hardcoded logic
     query_lower = query.lower()
 
     # Explicit role switch commands

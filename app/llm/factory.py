@@ -202,9 +202,25 @@ class LLMFactory:
                 else:
                     raise RuntimeError(f"LLM circuit open for provider: {provider_name}")
             
+            # Budget check (Tier 1 Quick Win)
+            from ..services.cost_tracker import check_budget_before_llm_call, get_budget_manager, BudgetExceededException
+            budget_ok, budget_error = check_budget_before_llm_call(
+                estimated_tokens=max_tokens * 2,  # Rough estimate: input + output
+                model=model_name,
+                budget_id="daily"
+            )
+            if not budget_ok:
+                metrics.inc("llm_budget_rejected_total")
+                log_with_context(logger, "warning", "LLM call rejected: budget exceeded",
+                               error=budget_error, model=model_name)
+                raise BudgetExceededException(budget_error)
+
             # Get provider
             provider = get_provider(provider_name)
-            
+
+            # Extract effort from config (for latency optimization)
+            effort = config.get("effort")  # "low", "medium", "high", or None
+
             # Call
             response_text, usage = provider.call(
                 messages=messages,
@@ -212,6 +228,7 @@ class LLMFactory:
                 model=model_name,
                 max_tokens=max_tokens,
                 timeout=timeout,
+                effort=effort,
             )
 
             if provider_name:
@@ -223,19 +240,29 @@ class LLMFactory:
                 usage["input_tokens"],
                 usage["output_tokens"]
             )
-            
+
+            # Track against budget
+            try:
+                budget_manager = get_budget_manager()
+                budget_manager.add_spent("daily", cost)
+            except Exception as budget_err:
+                log_with_context(logger, "debug", "Budget tracking failed", error=str(budget_err))
+
             duration_ms = (time.time() - start_time) * 1000
-            
+
             # Log metrics
             metrics.inc("llm_api_calls_total")
             metrics.observe("llm_call_duration_ms", duration_ms)
             metrics.inc(f"llm_calls_by_provider_{provider_name}")
             metrics.inc(f"llm_calls_by_model_{model_name.replace('-', '_')}")
+            if effort:
+                metrics.inc(f"llm_calls_by_effort_{effort}")
             
             log_with_context(
                 logger, "info",
                 f"LLM call successful ({provider_name})",
                 model=model_name,
+                effort=effort or "default",
                 tokens_in=usage["input_tokens"],
                 tokens_out=usage["output_tokens"],
                 cost_usd=f"${cost:.4f}",

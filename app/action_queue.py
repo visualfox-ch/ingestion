@@ -226,13 +226,14 @@ def check_path_permission(path: str, operation: str = "read") -> Dict[str, Any]:
     permissions = load_permissions()
     sandbox = permissions.get("sandbox", {})
 
-    # Normalize path
-    path = os.path.normpath(path)
+    # Resolve path fully (handles symlinks and ../ traversal attacks)
+    path = os.path.realpath(path)
 
     # Check forbidden paths first
     for forbidden in sandbox.get("forbidden_paths", []):
-        forbidden_path = os.path.normpath(forbidden.get("path", ""))
-        if path.startswith(forbidden_path):
+        forbidden_path = os.path.realpath(forbidden.get("path", ""))
+        # Check exact match or path is under forbidden directory
+        if path == forbidden_path or path.startswith(forbidden_path + os.sep):
             return {
                 "allowed": False,
                 "reason": forbidden.get("reason", "Path is forbidden")
@@ -240,8 +241,9 @@ def check_path_permission(path: str, operation: str = "read") -> Dict[str, Any]:
 
     # Check allowed paths
     for allowed in sandbox.get("allowed_paths", []):
-        allowed_path = os.path.normpath(allowed.get("path", ""))
-        if path.startswith(allowed_path):
+        allowed_path = os.path.realpath(allowed.get("path", ""))
+        # Check exact match or path is under allowed directory
+        if path == allowed_path or path.startswith(allowed_path + os.sep):
             perms = allowed.get("permissions", [])
             if operation in perms or "write" in perms and operation == "read":
                 return {"allowed": True, "reason": "Path is allowed"}

@@ -287,6 +287,11 @@ def _semantic_search(
             "vector": query_embedding,
             "limit": limit,
             "with_payload": True,
+            # HNSW search optimization: lower ef = faster but less accurate
+            "params": {
+                "hnsw_ef": 64,
+                "exact": False
+            }
         }
 
         if filters:

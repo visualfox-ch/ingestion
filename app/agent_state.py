@@ -102,6 +102,13 @@ class AgentState:
     dominant_facette: Optional[str] = None
     domain_context: Optional[str] = None
 
+    # Specialist Agent (Tier 3 #8)
+    specialist: Optional[str] = None  # 'fit', 'work', 'comm'
+    specialist_display_name: Optional[str] = None  # 'FitJarvis', 'WorkJarvis', 'CommJarvis'
+
+    # Context Engine (Tier 3 #10)
+    context_profile: Optional[Any] = None  # ContextProfile from context_engine_service
+
     @property
     def elapsed_ms(self) -> float:
         """Elapsed time since start in milliseconds."""

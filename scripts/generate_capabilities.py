@@ -20,6 +20,12 @@ MAIN_PY = INGESTION_ROOT / "app" / "main.py"
 OUTPUT_JSON = REPO_ROOT / "docs" / "CAPABILITIES.json"
 FEATURES_MD = REPO_ROOT / "docs" / "FEATURES.md"
 
+# Connector files with additional tools
+CONNECTOR_FILES = [
+    INGESTION_ROOT / "app" / "connectors" / "asana.py",
+    INGESTION_ROOT / "app" / "connectors" / "reclaim.py",
+]
+
 
 def get_git_info():
     """Get current git version info."""
@@ -152,12 +158,32 @@ def generate_capabilities():
     version = extract_version_from_file(CONFIG_PY)
     if version == "unknown":
         version = extract_version_from_file(MAIN_PY)
-    
+
+    # Collect tools from main tools.py
+    all_tools = extract_tools_from_file(TOOLS_PY)
+
+    # Also collect tools from connector files
+    for connector_file in CONNECTOR_FILES:
+        connector_tools = extract_tools_from_file(connector_file)
+        # Add connector name to tool for tracking
+        connector_name = connector_file.stem  # e.g., "asana", "reclaim"
+        for tool in connector_tools:
+            tool["connector"] = connector_name
+        all_tools.extend(connector_tools)
+
+    # Deduplicate by name (keep first occurrence)
+    seen_names = set()
+    unique_tools = []
+    for tool in all_tools:
+        if tool["name"] not in seen_names:
+            seen_names.add(tool["name"])
+            unique_tools.append(tool)
+
     capabilities = {
         "version": version,
         "build_timestamp": datetime.utcnow().isoformat() + "Z",
         "git": git_info,
-        "tools": extract_tools_from_file(TOOLS_PY),
+        "tools": sorted(unique_tools, key=lambda x: x["name"]),
         "features": extract_features_from_config(),
         "endpoints": extract_endpoints_from_main(),
         "meta": {
@@ -165,7 +191,7 @@ def generate_capabilities():
             "purpose": "Self-documentation for Jarvis agent awareness"
         }
     }
-    
+
     return capabilities
 
 

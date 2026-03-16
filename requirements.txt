@@ -15,9 +15,11 @@ openai>=1.0.0
 duckduckgo-search
 python-telegram-bot
 aiohttp
+aiosmtplib
 apscheduler
 filelock
 psycopg2-binary
+sqlalchemy>=2.0.0
 python-multipart
 meilisearch
 paramiko

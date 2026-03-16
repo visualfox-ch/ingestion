@@ -39,6 +39,12 @@ class ConversationContext:
     relationship_updates: Dict[str, Any] = field(default_factory=dict)
     namespace: str = "work_projektil"
     message_count: int = 0
+    # --- Best Practice Additions ---
+    entity_mentions: List[str] = field(default_factory=list)
+    timeline_anchors: List[str] = field(default_factory=list)
+    document_references: List[str] = field(default_factory=list)
+    previous_session_id: Optional[str] = None
+    related_sessions: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -67,6 +73,11 @@ def init_context_tables():
             emotional_indicators TEXT,
             relationship_updates TEXT,
             message_count INTEGER DEFAULT 0,
+            entity_mentions TEXT,
+            timeline_anchors TEXT,
+            document_references TEXT,
+            previous_session_id TEXT,
+            related_sessions TEXT,
             created_at TEXT NOT NULL,
             UNIQUE(session_id)
         )
@@ -137,6 +148,7 @@ def init_context_tables():
     log_with_context(logger, "info", "Context tables initialized")
 
 
+
 def save_conversation_context(context: ConversationContext) -> int:
     """
     Save conversation context at end of session.
@@ -149,8 +161,10 @@ def save_conversation_context(context: ConversationContext) -> int:
         INSERT INTO conversation_contexts (
             session_id, user_id, namespace, start_time, end_time,
             conversation_summary, key_topics, pending_actions,
-            emotional_indicators, relationship_updates, message_count, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            emotional_indicators, relationship_updates, message_count,
+            entity_mentions, timeline_anchors, document_references,
+            previous_session_id, related_sessions, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
             end_time = excluded.end_time,
             conversation_summary = excluded.conversation_summary,
@@ -158,7 +172,12 @@ def save_conversation_context(context: ConversationContext) -> int:
             pending_actions = excluded.pending_actions,
             emotional_indicators = excluded.emotional_indicators,
             relationship_updates = excluded.relationship_updates,
-            message_count = excluded.message_count
+            message_count = excluded.message_count,
+            entity_mentions = excluded.entity_mentions,
+            timeline_anchors = excluded.timeline_anchors,
+            document_references = excluded.document_references,
+            previous_session_id = excluded.previous_session_id,
+            related_sessions = excluded.related_sessions
     """, (
         context.session_id,
         context.user_id,
@@ -171,6 +190,11 @@ def save_conversation_context(context: ConversationContext) -> int:
         json.dumps(context.emotional_indicators),
         json.dumps(context.relationship_updates),
         context.message_count,
+        json.dumps(context.entity_mentions),
+        json.dumps(context.timeline_anchors),
+        json.dumps(context.document_references),
+        context.previous_session_id,
+        json.dumps(context.related_sessions),
         now
     ))
 
@@ -229,6 +253,9 @@ def get_conversation_history(
     """
     Retrieve relevant conversation contexts from previous sessions.
 
+    Phase 19.2: Now prioritizes session_messages for recent activity,
+    then enriches with conversation_contexts for summaries.
+
     Args:
         user_id: Filter by user
         days_back: How many days to look back
@@ -240,14 +267,47 @@ def get_conversation_history(
         List of conversation context dicts with parsed JSON fields
     """
     conn = _get_conn()
-
     cutoff = (datetime.now() - timedelta(days=days_back)).isoformat()
 
+    # Phase 19.2: First get recently ACTIVE sessions from session_messages
+    # This catches sessions that were reused but have old start_time in conversation_contexts
+    recent_session_ids = set()
+    session_msg_data = {}
+    try:
+        sm_query = """
+            SELECT session_id,
+                   COUNT(*) as msg_count,
+                   MIN(timestamp) as first_msg,
+                   MAX(timestamp) as last_msg
+            FROM session_messages
+            WHERE timestamp > ?
+        """
+        sm_params = [cutoff]
+        if user_id:
+            sm_query += " AND user_id = ?"
+            sm_params.append(user_id)
+        sm_query += " GROUP BY session_id ORDER BY MAX(timestamp) DESC LIMIT ?"
+        sm_params.append(limit * 2)  # Get more to allow merging
+
+        cursor = conn.execute(sm_query, sm_params)
+        for row in cursor.fetchall():
+            sid = row[0]
+            recent_session_ids.add(sid)
+            session_msg_data[sid] = {
+                "msg_count": row[1],
+                "first_msg": row[2],
+                "last_msg": row[3]
+            }
+    except Exception:
+        pass  # session_messages table might not exist
+
+    # Now query conversation_contexts - include sessions that are recently active
+    # even if their start_time is old
     query = """
         SELECT * FROM conversation_contexts
-        WHERE start_time > ?
-    """
-    params = [cutoff]
+        WHERE (start_time > ? OR session_id IN ({}))
+    """.format(",".join(["?" for _ in recent_session_ids]) if recent_session_ids else "'__none__'")
+    params = [cutoff] + list(recent_session_ids)
 
     if user_id:
         query += " AND user_id = ?"
@@ -271,12 +331,89 @@ def get_conversation_history(
     results = []
     for row in rows:
         d = dict(row)
-        # Parse JSON fields
-        d["key_topics"] = json.loads(d["key_topics"]) if d["key_topics"] else []
-        d["pending_actions"] = json.loads(d["pending_actions"]) if d["pending_actions"] else []
-        d["emotional_indicators"] = json.loads(d["emotional_indicators"]) if d["emotional_indicators"] else {}
-        d["relationship_updates"] = json.loads(d["relationship_updates"]) if d["relationship_updates"] else {}
+        # Parse JSON fields (extended for best practice fields)
+        d["key_topics"] = json.loads(d.get("key_topics") or "[]")
+        d["pending_actions"] = json.loads(d.get("pending_actions") or "[]")
+        d["emotional_indicators"] = json.loads(d.get("emotional_indicators") or "{}")
+        d["relationship_updates"] = json.loads(d.get("relationship_updates") or "{}")
+        d["entity_mentions"] = json.loads(d.get("entity_mentions") or "[]")
+        d["timeline_anchors"] = json.loads(d.get("timeline_anchors") or "[]")
+        d["document_references"] = json.loads(d.get("document_references") or "[]")
+        d["related_sessions"] = json.loads(d.get("related_sessions") or "[]")
+        # previous_session_id bleibt String/None
         results.append(d)
+
+    # Phase 19.1: Enrich with auto-persisted session_messages
+    try:
+        from .services.auto_session_persist import get_auto_session_persist
+        persist = get_auto_session_persist()
+
+        # Get recent messages from auto-persist (None = all users)
+        recent_messages = persist.get_recent_messages(
+            user_id=user_id,  # None is ok - will return all users
+            limit=100,
+            hours=days_back * 24
+        )
+
+        # Group messages by session_id
+        session_msg_counts = {}
+        session_msg_groups = {}
+        for msg in recent_messages:
+            sid = msg.get("session_id")
+            if sid:
+                session_msg_counts[sid] = session_msg_counts.get(sid, 0) + 1
+                if sid not in session_msg_groups:
+                    session_msg_groups[sid] = []
+                session_msg_groups[sid].append(msg)
+
+        # Update existing results with session_messages data
+        sessions_seen = set()
+        for r in results:
+            sid = r.get("session_id")
+            if sid and sid in session_msg_counts:
+                # Update message_count from session_messages (more accurate)
+                r["message_count"] = session_msg_counts[sid]
+                r["source"] = "enriched"  # conversation_contexts + session_messages
+                # Update timestamps if session_messages has newer data
+                if sid in session_msg_groups:
+                    msgs = session_msg_groups[sid]
+                    if msgs:
+                        # Use newest timestamp from session_messages
+                        newest_ts = max(m.get("timestamp", "") for m in msgs)
+                        oldest_ts = min(m.get("timestamp", "") for m in msgs)
+                        # If session_messages is more recent, update timestamps
+                        if newest_ts > (r.get("end_time") or ""):
+                            r["end_time"] = newest_ts
+                        if oldest_ts and (not r.get("start_time") or oldest_ts < r.get("start_time", "")):
+                            r["start_time"] = oldest_ts
+                sessions_seen.add(sid)
+            elif sid:
+                sessions_seen.add(sid)
+
+        # Add new sessions that only exist in session_messages
+        if len(results) < limit:
+            for sid, messages in list(session_msg_groups.items())[:limit - len(results)]:
+                if sid in sessions_seen or not messages:
+                    continue
+                # Build a summary from the messages
+                user_msgs = [m["content"][:200] for m in messages if m.get("role") == "user"]
+                summary = " | ".join(user_msgs[:3]) if user_msgs else "No summary"
+
+                results.append({
+                    "session_id": sid,
+                    "start_time": messages[-1].get("timestamp", ""),
+                    "end_time": messages[0].get("timestamp", ""),
+                    "conversation_summary": f"[Auto-captured] {summary}",
+                    "key_topics": [],
+                    "pending_actions": [],
+                    "emotional_indicators": {},
+                    "relationship_updates": {},
+                    "message_count": len(messages),
+                    "source": "session_messages"
+                })
+    except Exception as e:
+        # Don't fail if auto-persist isn't available
+        pass
 
     return results
 
@@ -589,12 +726,30 @@ def build_context_prompt(
     if recent:
         sections.append("=== RECENT CONVERSATIONS ===")
         for ctx in recent[:3]:
-            date_str = ctx["start_time"][:10] if ctx.get("start_time") else "unknown"
+            # Use end_time (most recent activity) for display, fall back to start_time
+            display_date = ctx.get("end_time") or ctx.get("start_time") or ""
+            date_str = display_date[:10] if display_date else "unknown"
             topics = ", ".join(ctx.get("key_topics", [])[:3])
             summary = ctx.get("conversation_summary", "")[:200]
-            sections.append(f"[{date_str}] Topics: {topics}")
+            msg_count = ctx.get("message_count", 0)
+            sections.append(f"[{date_str}] ({msg_count} msgs) Topics: {topics}")
             if summary:
                 sections.append(f"  Summary: {summary}")
+
+    # Add recent message snippets for immediate context (Phase 19.3)
+    try:
+        from .services.auto_session_persist import get_auto_session_persist
+        persist = get_auto_session_persist()
+        recent_msgs = persist.get_recent_messages(user_id=user_id, limit=6, hours=24)
+        if recent_msgs:
+            sections.append("\n=== LETZTE NACHRICHTEN (24h) ===")
+            for msg in recent_msgs[:6]:
+                role = "User" if msg.get("role") == "user" else "Jarvis"
+                content = msg.get("content", "")[:100]
+                ts = msg.get("timestamp", "")[:16]
+                sections.append(f"[{ts}] {role}: {content}...")
+    except Exception:
+        pass  # Fallback gracefully if auto_session_persist not available
 
     # Get pending actions
     if include_pending:

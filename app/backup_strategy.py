@@ -502,7 +502,9 @@ def validate_backup_ready() -> Dict[str, Any]:
         # Parse backup timestamp (ISO 8601 format)
         try:
             backup_time = datetime.fromisoformat(backup_timestamp_str.replace("Z", "+00:00"))
-        except:
+        except (ValueError, TypeError) as e:
+            log_with_context(logger, "warning", "Failed to parse backup timestamp, using current time",
+                           timestamp_str=backup_timestamp_str, error=str(e))
             backup_time = datetime.now(timezone.utc)
         
         # Validate latest backup

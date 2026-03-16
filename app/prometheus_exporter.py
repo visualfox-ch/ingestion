@@ -23,11 +23,39 @@ try:
         Gauge,
         Histogram,
         Summary,
-        start_http_server
+        start_http_server,
+        REGISTRY
     )
     PROMETHEUS_AVAILABLE = True
 except ImportError:
     PROMETHEUS_AVAILABLE = False
+
+
+def _get_or_create_counter(name: str, description: str, labels: list = None) -> 'Counter':
+    """Get existing counter or create new one (avoid duplicate registration)."""
+    try:
+        return Counter(name, description, labels or [])
+    except ValueError:
+        # Already registered - get existing
+        return REGISTRY._names_to_collectors.get(name)
+
+
+def _get_or_create_gauge(name: str, description: str, labels: list = None) -> 'Gauge':
+    """Get existing gauge or create new one."""
+    try:
+        return Gauge(name, description, labels or [])
+    except ValueError:
+        return REGISTRY._names_to_collectors.get(name)
+
+
+def _get_or_create_histogram(name: str, description: str, labels: list = None, buckets=None) -> 'Histogram':
+    """Get existing histogram or create new one."""
+    try:
+        if buckets:
+            return Histogram(name, description, labels or [], buckets=buckets)
+        return Histogram(name, description, labels or [])
+    except ValueError:
+        return REGISTRY._names_to_collectors.get(name)
 
 
 class PrometheusExporter:
@@ -69,13 +97,13 @@ class PrometheusExporter:
             ['metric_name']
         )
         
-        # Anomaly detection metrics
-        self.anomalies_detected = Counter(
+        # Anomaly detection metrics (use helpers to avoid duplicate registration)
+        self.anomalies_detected = _get_or_create_counter(
             'jarvis_anomalies_detected_total',
             'Total anomalies detected',
             ['severity', 'metric_name']
         )
-        self.anomaly_check_duration = Histogram(
+        self.anomaly_check_duration = _get_or_create_histogram(
             'jarvis_anomaly_check_seconds',
             'Time to check anomalies',
             buckets=(0.01, 0.05, 0.1, 0.5, 1.0)
@@ -145,7 +173,41 @@ class PrometheusExporter:
             ['parameter'],
             buckets=(1, 5, 10, 30, 60, 300, 600)
         )
-    
+
+        # LLM Optimization metrics (O1-O6) - use helpers to avoid duplicate registration
+        self.llm_cache_hits = _get_or_create_counter(
+            'jarvis_llm_cache_hits_total',
+            'Total LLM cache hits',
+            ['cache_type']  # anthropic_prompt, openai_response, tool_definitions
+        )
+        self.llm_cache_misses = _get_or_create_counter(
+            'jarvis_llm_cache_misses_total',
+            'Total LLM cache misses',
+            ['cache_type']
+        )
+        self.llm_tokens_saved = _get_or_create_counter(
+            'jarvis_llm_tokens_saved_total',
+            'Total tokens saved by caching',
+            ['optimization']  # o2_responses, o3_prompt_cache, o5_tool_cache
+        )
+        self.llm_context_truncations = _get_or_create_counter(
+            'jarvis_llm_context_truncations_total',
+            'Total context window truncations (O6)'
+        )
+        self.llm_context_messages_dropped = _get_or_create_counter(
+            'jarvis_llm_context_messages_dropped_total',
+            'Total messages dropped due to context limit (O6)'
+        )
+        self.llm_streaming_chars = _get_or_create_counter(
+            'jarvis_llm_streaming_chars_total',
+            'Total characters streamed (O4)'
+        )
+        self.llm_batch_requests = _get_or_create_counter(
+            'jarvis_llm_batch_requests_total',
+            'Total batch API requests (O1)',
+            ['status']  # queued, completed, failed
+        )
+
     def export_baseline(self, baseline: Dict[str, Any]) -> None:
         """Export baseline metrics."""
         if not PROMETHEUS_AVAILABLE or not baseline or "metrics" not in baseline:
@@ -259,7 +321,46 @@ class PrometheusExporter:
             parameter=parameter,
             status=status
         ).inc()
-    
+
+    # LLM Optimization export methods (O1-O6)
+    def export_llm_cache_hit(self, cache_type: str) -> None:
+        """Record LLM cache hit (O2/O3/O5)."""
+        if not PROMETHEUS_AVAILABLE:
+            return
+        self.llm_cache_hits.labels(cache_type=cache_type).inc()
+
+    def export_llm_cache_miss(self, cache_type: str) -> None:
+        """Record LLM cache miss."""
+        if not PROMETHEUS_AVAILABLE:
+            return
+        self.llm_cache_misses.labels(cache_type=cache_type).inc()
+
+    def export_llm_tokens_saved(self, optimization: str, tokens: int) -> None:
+        """Record tokens saved by optimization."""
+        if not PROMETHEUS_AVAILABLE:
+            return
+        self.llm_tokens_saved.labels(optimization=optimization).inc(tokens)
+
+    def export_llm_context_truncation(self, messages_dropped: int = 0) -> None:
+        """Record context window truncation (O6)."""
+        if not PROMETHEUS_AVAILABLE:
+            return
+        self.llm_context_truncations.inc()
+        if messages_dropped > 0:
+            self.llm_context_messages_dropped.inc(messages_dropped)
+
+    def export_llm_streaming(self, chars: int) -> None:
+        """Record streaming characters (O4)."""
+        if not PROMETHEUS_AVAILABLE:
+            return
+        self.llm_streaming_chars.inc(chars)
+
+    def export_llm_batch_request(self, status: str) -> None:
+        """Record batch API request (O1)."""
+        if not PROMETHEUS_AVAILABLE:
+            return
+        self.llm_batch_requests.labels(status=status).inc()
+
     def start_server(self) -> bool:
         """
         Start Prometheus HTTP server.

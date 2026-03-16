@@ -66,13 +66,16 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=shared,id=pip-cache-core 
     pydantic>=2.12.0 \
     python-dotenv>=1.0.0 \
     aiohttp>=3.13.0 \
+    aiosmtplib>=3.0.0 \
     python-multipart>=0.0.20 \
     psycopg2-binary>=2.9.0 \
+    sqlalchemy>=2.0.0 \
     psutil>=7.2.0 \
     filelock>=3.20.0 \
     apscheduler>=3.10.0 \
     python-telegram-bot>=20.0.0 \
     meilisearch>=0.34.0 \
+    chromadb>=0.5.0 \
     paramiko>=3.4.0 \
     prometheus-client>=0.20.0 \
     pytz>=2024.1 \
@@ -94,6 +97,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=shared,id=pip-cache-core 
     radon>=6.0.0 \
     pylint>=3.0.0 \
     pytest>=8.0.0 \
+    pytest-asyncio>=0.21.0 \
     pytest-cov>=6.0.0
 
 # Stage 4: Runtime (Layer 4)
@@ -116,6 +120,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-cache \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     libpq5 \
+    git \
     curl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \

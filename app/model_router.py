@@ -7,8 +7,15 @@ Supports Anthropic (Claude) and OpenAI (GPT) with:
 - Circuit breaker for failover
 - Cost tracking and budget enforcement
 - Provider-specific optimizations
+- OpenAI Responses API for 40-80% cache improvement (O2)
 
 Default behavior is conservative (single model) unless multi-model enabled.
+
+O2 Responses API Migration:
+- Uses client.responses.create() instead of chat.completions.create()
+- Enables store=True for server-side state (30-day retention)
+- Supports previous_response_id for multi-turn conversations
+- Automatic 40-80% cache hit improvement on repeated contexts
 """
 import os
 import time
@@ -53,12 +60,12 @@ class ModelConfig:
         )
 
 
-# Model configurations (prices as of 2026-02)
+# Model configurations (prices as of 2026-03)
 MODELS = {
-    # Anthropic
-    "claude-3-5-haiku-20241022": ModelConfig(
+    # Anthropic - Updated model IDs for Claude 4.5/4.6
+    "claude-haiku-4-5-20251001": ModelConfig(
         provider=Provider.ANTHROPIC,
-        model_id="claude-3-5-haiku-20241022",
+        model_id="claude-haiku-4-5-20251001",
         max_tokens=500,  # Planner default
         input_price_per_1k=0.001,
         output_price_per_1k=0.005
@@ -91,7 +98,7 @@ MODELS = {
 # Role -> Model mappings (primary and fallback)
 ROLE_ROUTING = {
     AgentRole.PLANNER: {
-        "primary": "claude-3-5-haiku-20241022",
+        "primary": "claude-haiku-4-5-20251001",
         "fallback": "gpt-4o-mini",
         "max_tokens": 500
     },
@@ -101,7 +108,7 @@ ROLE_ROUTING = {
         "max_tokens": 4000
     },
     AgentRole.REVIEWER: {
-        "primary": "claude-3-5-haiku-20241022",  # Cross-provider by default
+        "primary": "claude-haiku-4-5-20251001",  # Cross-provider by default
         "fallback": "gpt-4o-mini",
         "max_tokens": 800
     }
@@ -221,11 +228,13 @@ class ModelRouter:
     - Circuit breaker for provider failover
     - Cost tracking with daily budget
     - Task-type routing preferences
+    - OpenAI Responses API with server-side caching (O2)
 
     Usage:
         router = ModelRouter()
         model = router.route_request(AgentRole.SPECIALIST, task_type="code")
         response = router.execute_with_fallback(model, messages)
+        # For multi-turn: pass response["openai_response_id"] as previous_response_id
     """
 
     def __init__(
@@ -245,6 +254,9 @@ class ModelRouter:
         # Clients (lazy-loaded)
         self._anthropic_client = None
         self._openai_client = None
+
+        # OpenAI Responses API: track last response ID per session for multi-turn
+        self._last_openai_response_id: Optional[str] = None
 
     def _get_anthropic_client(self):
         """Get or create Anthropic client."""
@@ -347,13 +359,25 @@ class ModelRouter:
         messages: List[Dict[str, Any]],
         system_prompt: str,
         tools: Optional[List[Dict]] = None,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        previous_response_id: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute request with automatic fallback on failure.
 
+        Args:
+            model_config: Model configuration
+            messages: List of conversation messages
+            system_prompt: System prompt
+            tools: Optional list of tool definitions
+            max_tokens: Max tokens for response
+            previous_response_id: OpenAI Responses API - chain to previous response
+            session_id: Optional session ID for response tracking
+
         Returns:
-            Dict with 'content', 'usage', 'model', 'provider', 'stop_reason'
+            Dict with 'content', 'usage', 'model', 'provider', 'stop_reason',
+            and 'openai_response_id' for OpenAI (for multi-turn chaining)
         """
         max_tokens = max_tokens or model_config.max_tokens
 
@@ -361,7 +385,10 @@ class ModelRouter:
             if model_config.provider == Provider.ANTHROPIC:
                 result = self._call_anthropic(model_config, messages, system_prompt, tools, max_tokens)
             else:
-                result = self._call_openai(model_config, messages, system_prompt, tools, max_tokens)
+                result = self._call_openai(
+                    model_config, messages, system_prompt, tools, max_tokens,
+                    previous_response_id=previous_response_id
+                )
 
             # Record success
             self._circuits[model_config.provider].record_success()
@@ -407,9 +434,9 @@ class ModelRouter:
         """Get equivalent model from different provider."""
         # Mapping of equivalent models
         equivalents = {
-            "claude-3-5-haiku-20241022": "gpt-4o-mini",
+            "claude-haiku-4-5-20251001": "gpt-4o-mini",
             "claude-sonnet-4-20250514": "gpt-4o",
-            "gpt-4o-mini": "claude-3-5-haiku-20241022",
+            "gpt-4o-mini": "claude-haiku-4-5-20251001",
             "gpt-4o": "claude-sonnet-4-20250514",
         }
         return equivalents.get(model_id, "gpt-4o" if target_provider == Provider.OPENAI else "claude-sonnet-4-20250514")
@@ -420,21 +447,49 @@ class ModelRouter:
         messages: List[Dict[str, Any]],
         system_prompt: str,
         tools: Optional[List[Dict]],
-        max_tokens: int
+        max_tokens: int,
+        enable_prompt_cache: bool = True
     ) -> Dict[str, Any]:
-        """Call Anthropic API."""
+        """
+        Call Anthropic API with prompt caching (O3).
+
+        O3 Prompt Caching:
+        - Converts system prompt to cached content blocks
+        - Saves up to 90% on input costs for repeated prompts
+        - 5-minute cache TTL on Anthropic's side
+        """
         client = self._get_anthropic_client()
+
+        # O3: Build cached system prompt
+        if enable_prompt_cache:
+            system_param = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ]
+        else:
+            system_param = system_prompt
 
         kwargs = {
             "model": model_config.model_id,
             "max_tokens": max_tokens,
-            "system": system_prompt,
+            "system": system_param,
             "messages": messages
         }
         if tools:
             kwargs["tools"] = tools
 
         response = client.messages.create(**kwargs)
+
+        # O3: Log cache stats if available
+        if hasattr(response.usage, 'cache_creation_input_tokens'):
+            cache_created = getattr(response.usage, 'cache_creation_input_tokens', 0)
+            cache_read = getattr(response.usage, 'cache_read_input_tokens', 0)
+            if cache_created > 0 or cache_read > 0:
+                log_with_context(logger, "debug", "Anthropic prompt cache stats",
+                               cache_created=cache_created, cache_read=cache_read)
 
         # Extract content
         content = []
@@ -466,19 +521,36 @@ class ModelRouter:
         messages: List[Dict[str, Any]],
         system_prompt: str,
         tools: Optional[List[Dict]],
-        max_tokens: int
+        max_tokens: int,
+        previous_response_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Call OpenAI API."""
+        """
+        Call OpenAI Responses API (O2 Migration).
+
+        Uses Responses API instead of Chat Completions for:
+        - Server-side state with store=True (30-day retention)
+        - Multi-turn chaining with previous_response_id
+        - 40-80% cache improvement on repeated contexts
+        """
         client = self._get_openai_client()
 
-        # Convert messages format (Anthropic -> OpenAI)
-        openai_messages = [{"role": "system", "content": system_prompt}]
+        # Build input for Responses API
+        # Responses API accepts input as string or list of message objects
+        input_messages = []
+
+        # Add system message as developer role (Responses API convention)
+        input_messages.append({
+            "role": "developer",
+            "content": system_prompt
+        })
+
+        # Convert messages format (Anthropic -> OpenAI Responses)
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
 
             if isinstance(content, list):
-                # Handle tool results - convert to OpenAI format
+                # Handle tool results - convert to text format
                 text_parts = []
                 for item in content:
                     if isinstance(item, dict):
@@ -488,78 +560,139 @@ class ModelRouter:
                             text_parts.append(f"[Tool Result: {item.get('content', '')}]")
                 content = "\n".join(text_parts) if text_parts else str(content)
 
-            openai_messages.append({"role": role, "content": content})
+            input_messages.append({"role": role, "content": content})
 
-        # Convert tools format
+        # Convert tools format for Responses API
         openai_tools = None
         if tools:
             openai_tools = []
             for tool in tools:
                 openai_tools.append({
                     "type": "function",
-                    "function": {
-                        "name": tool["name"],
-                        "description": tool.get("description", ""),
-                        "parameters": tool.get("input_schema", {})
-                    }
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("input_schema", {})
                 })
 
+        # Build Responses API kwargs
         kwargs = {
             "model": model_config.model_id,
-            "max_tokens": max_tokens,
-            "messages": openai_messages
+            "input": input_messages,
+            "store": True,  # O2: Enable server-side caching (30-day retention)
         }
+
+        # Add max_tokens if supported by model
+        if max_tokens:
+            kwargs["max_output_tokens"] = max_tokens
+
+        # O2: Chain to previous response for multi-turn
+        if previous_response_id:
+            kwargs["previous_response_id"] = previous_response_id
+            log_with_context(logger, "debug", "Using previous_response_id for caching",
+                           previous_id=previous_response_id[:20] + "...")
+            # Export O2 cache hit metric
+            try:
+                from .prometheus_exporter import get_prometheus_exporter
+                exporter = get_prometheus_exporter()
+                exporter.export_llm_cache_hit("openai_response")
+            except Exception:
+                pass
+
         if openai_tools:
             kwargs["tools"] = openai_tools
 
-        response = client.chat.completions.create(**kwargs)
+        # Call Responses API
+        response = client.responses.create(**kwargs)
 
-        # Extract content (convert back to Anthropic-like format)
+        # Store response ID for potential multi-turn
+        self._last_openai_response_id = response.id
+        log_with_context(logger, "debug", "OpenAI Responses API call",
+                        response_id=response.id[:20] + "...",
+                        store=True)
+
+        # Extract content from Responses API format
         content = []
-        choice = response.choices[0]
-        if choice.message.content:
-            content.append({"type": "text", "text": choice.message.content})
 
-        if choice.message.tool_calls:
-            for tc in choice.message.tool_calls:
-                import json
-                content.append({
-                    "type": "tool_use",
-                    "id": tc.id,
-                    "name": tc.function.name,
-                    "input": json.loads(tc.function.arguments) if tc.function.arguments else {}
-                })
+        # Handle output_text (simple text response)
+        if hasattr(response, 'output_text') and response.output_text:
+            content.append({"type": "text", "text": response.output_text})
 
-        # Map finish reason to Anthropic stop_reason
+        # Handle output array (structured response with potential tool calls)
+        if hasattr(response, 'output') and response.output:
+            for item in response.output:
+                if hasattr(item, 'type'):
+                    if item.type == "message":
+                        # Extract text from message content
+                        if hasattr(item, 'content'):
+                            for c in item.content:
+                                if hasattr(c, 'type') and c.type == "output_text":
+                                    if hasattr(c, 'text'):
+                                        content.append({"type": "text", "text": c.text})
+                    elif item.type == "function_call":
+                        import json
+                        content.append({
+                            "type": "tool_use",
+                            "id": item.call_id if hasattr(item, 'call_id') else item.id,
+                            "name": item.name,
+                            "input": json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
+                        })
+
+        # Map status to Anthropic stop_reason
         stop_reason_map = {
-            "stop": "end_turn",
-            "tool_calls": "tool_use",
-            "length": "max_tokens"
+            "completed": "end_turn",
+            "incomplete": "max_tokens",
         }
-        stop_reason = stop_reason_map.get(choice.finish_reason, choice.finish_reason)
+        status = getattr(response, 'status', 'completed')
+        stop_reason = stop_reason_map.get(status, status)
+
+        # Extract usage (Responses API format)
+        usage = {"input_tokens": 0, "output_tokens": 0}
+        if hasattr(response, 'usage'):
+            usage["input_tokens"] = getattr(response.usage, 'input_tokens', 0)
+            usage["output_tokens"] = getattr(response.usage, 'output_tokens', 0)
 
         return {
             "content": content,
-            "usage": {
-                "input_tokens": response.usage.prompt_tokens,
-                "output_tokens": response.usage.completion_tokens
-            },
+            "usage": usage,
             "model": model_config.model_id,
             "provider": Provider.OPENAI.value,
-            "stop_reason": stop_reason
+            "stop_reason": stop_reason,
+            "openai_response_id": response.id  # O2: Return for multi-turn chaining
         }
+
+
+    def get_last_openai_response_id(self) -> Optional[str]:
+        """Get the last OpenAI Responses API response ID for multi-turn chaining."""
+        return self._last_openai_response_id
+
+    def clear_openai_response_chain(self) -> None:
+        """Clear the response chain (start fresh conversation)."""
+        self._last_openai_response_id = None
+        log_with_context(logger, "debug", "OpenAI response chain cleared")
 
 
 # Singleton instance
 _router: Optional[ModelRouter] = None
 
 
-def get_router(multi_model_enabled: bool = False, daily_budget_usd: float = 10.0) -> ModelRouter:
-    """Get or create the model router singleton."""
+def get_router(multi_model_enabled: bool = None, daily_budget_usd: float = None) -> ModelRouter:
+    """Get or create the model router singleton.
+
+    Environment variables:
+        MULTI_MODEL_ENABLED: "true" to enable multi-model routing (default: false)
+        DAILY_BUDGET_USD: Daily budget limit (default: 10.0)
+    """
     global _router
     if _router is None:
+        # Read from env vars if not explicitly set
+        if multi_model_enabled is None:
+            multi_model_enabled = os.environ.get("MULTI_MODEL_ENABLED", "false").lower() == "true"
+        if daily_budget_usd is None:
+            daily_budget_usd = float(os.environ.get("DAILY_BUDGET_USD", "10.0"))
+
         _router = ModelRouter(
             multi_model_enabled=multi_model_enabled,
             daily_budget_usd=daily_budget_usd
         )
+        logger.info(f"ModelRouter initialized: multi_model={multi_model_enabled}, budget=${daily_budget_usd}")
     return _router

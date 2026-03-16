@@ -69,15 +69,26 @@ class LLMProvider(ABC):
 
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude provider"""
-    
+
     provider_name = "anthropic"
-    
-    # Pricing per 1M tokens (as of Feb 2026)
+
+    # Pricing per 1M tokens (as of March 2026)
+    # Current models use aliases (e.g., claude-sonnet-4-6)
     MODEL_COSTS = {
-        "claude-3-5-haiku-20241022": {"input": 0.80, "output": 4.00},
-        "claude-3-5-haiku-20250110": {"input": 0.80, "output": 4.00},
+        # Current models (use these)
+        "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+        "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
+        "claude-opus-4-6": {"input": 5.00, "output": 25.00},
+        # Legacy aliases (for backward compatibility)
+        "claude-3-5-haiku-20241022": {"input": 1.00, "output": 5.00},
+        "claude-3-5-haiku-20250110": {"input": 1.00, "output": 5.00},
         "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
-        "claude-opus-4-20250514": {"input": 15.00, "output": 75.00},
+        "claude-opus-4-20250514": {"input": 5.00, "output": 25.00},
+    }
+
+    # Models that support effort parameter (Opus 4.5+, Sonnet 4.6)
+    EFFORT_SUPPORTED_MODELS = {
+        "claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-4-6"
     }
     
     def __init__(self):
@@ -107,18 +118,30 @@ class AnthropicProvider(LLMProvider):
         temperature: float = 0.7,
         **kwargs
     ) -> tuple[str, Dict[str, Any]]:
-        """Call Claude API"""
+        """Call Claude API with optional effort parameter."""
         timeout = kwargs.get("timeout")
+        effort = kwargs.get("effort")  # "low", "medium", "high", or None
+
+        # Build request params
+        request_params = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "system": system,
+            "messages": messages,
+        }
+
+        if timeout:
+            request_params["timeout"] = timeout
+
+        # Add effort parameter for supported models
+        if effort and model in self.EFFORT_SUPPORTED_MODELS:
+            request_params["output_config"] = {"effort": effort}
+
         try:
-            response = self.client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system=system,
-                messages=messages,
-                timeout=timeout,
-            )
+            response = self.client.messages.create(**request_params)
         except TypeError:
+            # Fallback without optional params
             response = self.client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
@@ -126,17 +149,17 @@ class AnthropicProvider(LLMProvider):
                 system=system,
                 messages=messages,
             )
-        
+
         text = ""
         for block in response.content:
             if block.type == "text":
                 text += block.text
-        
+
         usage = {
             "input_tokens": response.usage.input_tokens,
             "output_tokens": response.usage.output_tokens,
         }
-        
+
         return text, usage
     
     def calculate_cost(
@@ -146,11 +169,11 @@ class AnthropicProvider(LLMProvider):
         output_tokens: int
     ) -> float:
         """Calculate cost in USD for Claude model"""
-        costs = self.MODEL_COSTS.get(model, self.MODEL_COSTS.get("claude-3-5-sonnet-20241022"))
-        
+        costs = self.MODEL_COSTS.get(model, self.MODEL_COSTS.get("claude-sonnet-4-6"))
+
         input_cost = (input_tokens / 1_000_000) * costs["input"]
         output_cost = (output_tokens / 1_000_000) * costs["output"]
-        
+
         return input_cost + output_cost
     
     def health_check(self) -> Dict[str, Any]:

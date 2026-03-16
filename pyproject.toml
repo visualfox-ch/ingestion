@@ -18,6 +18,7 @@ dependencies = [
     "torch>=2.10.0",                           # 915 MB
     "transformers>=5.0.0",                     # 10 MB (uses torch)
     "sentence-transformers>=5.2.0",            # 500 MB
+    "chromadb>=0.5.0",
     "qdrant-client>=1.16.0",                   # Vector DB
     "scikit-learn>=1.8.0",                     # ML utilities
     "scipy>=1.17.0",                           # Scientific computing
@@ -124,6 +125,38 @@ select = ["E", "F", "W", "I"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests requiring external services",
+    "requires_redis: marks tests needing Redis connection",
+    "requires_api: marks tests needing running Jarvis API",
+    "requires_db: marks tests needing PostgreSQL",
+]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "app/migrations/*",
+    "app/__pycache__/*",
+    "app/*_test.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+# Note: fail_under disabled for local runs (many tests need Postgres/Docker)
+# Real coverage should be measured in container: pytest --cov=app --cov-report=html
+fail_under = 0
+show_missing = true
 
 [project.scripts]
 # Phase 1: Code Metrics (Self-Optimization)

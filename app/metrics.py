@@ -396,7 +396,7 @@ def record_classification_accuracy(classification: str, outcome: str):
 def record_tools_selected(query_class: str, tool_count: int):
     """
     Record number of tools selected for query class.
-    
+
     Args:
         query_class: simple/standard/complex
         tool_count: Number of tools made available
@@ -411,3 +411,87 @@ def record_tools_selected(query_class: str, tool_count: int):
         query_class=query_class,
         tool_count=tool_count
     )
+
+
+# =============================================================================
+# REASONING OBSERVABILITY METRICS (Tier 1 Quick Win - Mar 2026)
+# Tracks tool selection rationale, confidence, and reasoning paths
+# =============================================================================
+
+# Confidence score distribution per response
+REASONING_CONFIDENCE = Histogram(
+    'jarvis_reasoning_confidence',
+    'Confidence score distribution for agent responses (0.0-1.0)',
+    ['source'],  # tool_selection, response_quality, knowledge_match
+    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+)
+
+# Tool selection reasons - why was this tool chosen?
+TOOL_SELECTION_REASON = Counter(
+    'jarvis_tool_selection_reason_total',
+    'Reasons for tool selection',
+    ['tool_name', 'reason']  # keyword_match, context_relevance, explicit_request, fallback
+)
+
+# Reasoning path tracking - what steps did the agent take?
+REASONING_PATH = Counter(
+    'jarvis_reasoning_path_total',
+    'Reasoning path steps taken',
+    ['step_type', 'outcome']  # tool_call/direct_response, success/failure/skip
+)
+
+# Tool alternatives considered but not selected
+TOOL_ALTERNATIVES_CONSIDERED = Counter(
+    'jarvis_tool_alternatives_considered_total',
+    'Alternative tools considered but not selected',
+    ['selected_tool', 'alternative_tool', 'rejection_reason']
+)
+
+# Hallucination risk flags
+HALLUCINATION_FLAGS = Counter(
+    'jarvis_hallucination_flags_total',
+    'Potential hallucination risk indicators',
+    ['flag_type']  # no_tool_data, low_confidence, unverified_claim
+)
+
+# Reasoning depth (number of reasoning steps before response)
+REASONING_DEPTH = Histogram(
+    'jarvis_reasoning_depth',
+    'Number of reasoning steps before final response',
+    ['query_type'],  # simple, complex, multi_tool
+    buckets=[1, 2, 3, 5, 8, 10, 15, 20]
+)
+
+
+def record_reasoning_confidence(source: str, confidence: float):
+    """Record confidence score for a reasoning component."""
+    REASONING_CONFIDENCE.labels(source=source).observe(max(0.0, min(1.0, confidence)))
+
+
+def record_tool_selection_reason(tool_name: str, reason: str):
+    """Record why a tool was selected."""
+    TOOL_SELECTION_REASON.labels(tool_name=tool_name, reason=reason).inc()
+
+
+def record_reasoning_path(step_type: str, outcome: str):
+    """Record a step in the reasoning path."""
+    REASONING_PATH.labels(step_type=step_type, outcome=outcome).inc()
+
+
+def record_tool_alternative(selected: str, alternative: str, rejection_reason: str):
+    """Record an alternative tool that was considered but not selected."""
+    TOOL_ALTERNATIVES_CONSIDERED.labels(
+        selected_tool=selected,
+        alternative_tool=alternative,
+        rejection_reason=rejection_reason
+    ).inc()
+
+
+def record_hallucination_flag(flag_type: str):
+    """Record a potential hallucination risk flag."""
+    HALLUCINATION_FLAGS.labels(flag_type=flag_type).inc()
+
+
+def record_reasoning_depth(query_type: str, depth: int):
+    """Record reasoning depth for a query."""
+    REASONING_DEPTH.labels(query_type=query_type).observe(depth)

@@ -7,12 +7,21 @@ Detects query complexity to enable fast-path optimization:
 - Complex queries: Full context, all tools, Sonnet-4, <5s target
 
 Classification is regex-based for zero latency overhead.
+Now database-backed with learning capability (Phase 21).
 """
 from typing import Tuple
 import re
 from .observability import get_logger, log_with_context
 
 logger = get_logger("jarvis.query_classifier")
+
+# Try to use database-backed patterns first
+_USE_DB_PATTERNS = True
+try:
+    from .services.dynamic_config import classify_query_from_db, learn_query_pattern
+except ImportError:
+    _USE_DB_PATTERNS = False
+    logger.debug("Database patterns not available, using hardcoded")
 
 
 # Simple query patterns - no tools needed, minimal context
@@ -49,6 +58,17 @@ COMPLEX_INDICATORS = [
     "kalender", "termin", "angebot", "verkauf", "marketing",
     # Numbers/Analysis
     "prozent", "statistik", "trend", "ausreißer", "anomalie",
+    # Math/Calculation (Phase 18: Self-Execution)
+    "rechne", "berechne", "wurzel", "quadratwurzel", "summe", "formel",
+    "calculate", "sqrt", "math", "mathe", "durchschnitt", "average",
+    # Research Agent (Phase 18.6)
+    "recherchier", "research", "investigate", "deep dive", "comprehensive",
+    # Self-Validation (Phase 19)
+    "self_validation", "validation", "dashboard", "benchmark", "metrics",
+    "diagnose", "diagnostics", "system health", "tool registry", "performance",
+    "quality score", "proactivity", "introspect", "selbst", "zustand",
+    # Batch API (Phase O1)
+    "batch", "batch job", "bulk", "async processing", "50%", "kostenersparnis",
 ]
 
 # Keywords for standard queries (selective context + reduced tools)
@@ -65,13 +85,16 @@ STANDARD_INDICATORS = [
     "briefing", "was steht an", "überblick", "agenda",
     # Status
     "status", "wie weit", "fertig", "erledigt", "offen",
+    # Reminders (Phase 18.5)
+    "erinner", "reminder", "timer", "weck", "remind",
 ]
 
 
 def classify_query(query: str) -> Tuple[str, float]:
     """
     Classify query complexity using regex patterns.
-    
+    Database-first with fallback to hardcoded (Phase 21).
+
     Returns:
         Tuple of (classification, confidence)
         - "simple": Fast-path candidate (no tools, minimal context)
@@ -80,9 +103,22 @@ def classify_query(query: str) -> Tuple[str, float]:
     """
     if not query or not isinstance(query, str):
         return ("standard", 0.5)
-    
+
     query_lower = query.lower().strip()
-    
+
+    # Try database patterns first (Phase 21)
+    if _USE_DB_PATTERNS:
+        try:
+            db_result = classify_query_from_db(query_lower)
+            if db_result and db_result[1] > 0.6:  # Only use if confident
+                log_with_context(
+                    logger, "debug", "Query classified from DB",
+                    classification=db_result[0], confidence=db_result[1]
+                )
+                return db_result
+        except Exception as e:
+            logger.debug(f"DB pattern classification failed: {e}")
+
     # Check simple patterns first (highest priority)
     for pattern in SIMPLE_PATTERNS:
         if re.match(pattern, query_lower, re.IGNORECASE):
@@ -138,12 +174,12 @@ def classify_query(query: str) -> Tuple[str, float]:
 
 def get_fast_path_model() -> str:
     """Return the model to use for simple queries (fast + cheap)."""
-    return "claude-3-5-haiku-20241022"
+    return "claude-haiku-4-5"
 
 
 def get_standard_model() -> str:
     """Return the model to use for standard queries (balanced)."""
-    return "claude-sonnet-4-20250514"
+    return "claude-sonnet-4-6"
 
 
 def get_minimal_system_prompt() -> str:
@@ -185,8 +221,21 @@ def get_reduced_tools() -> list:
         "get_person_context",        # Useful: person information
         "recall_conversation_history",  # Continuity
         "recall_facts",              # User preference retrieval
+        "remember_fact",             # Memory persistence (Phase 18)
+        "record_learning",           # Learning persistence (Phase 18) - requires approval
+        "record_learnings_batch",    # Batch learning (Phase 18) - requires approval
+        "remember_conversation_context",  # Session memory (Phase 18)
         "get_gmail_messages",        # Communication
         "proactive_hint",            # Coaching hints
+        "execute_python",            # Python execution (Phase 18)
+        "delegate_ollama_task",      # Local LLM delegation (Phase 18.4)
+        # Note: set_reminder, list_reminders removed - not implemented in TOOL_REGISTRY
+        # Self-Validation (Phase 19) - essential for introspection
+        "self_validation_dashboard", # Combined dashboard
+        "self_validation_pulse",     # Quick health pulse (<50ms)
+        "system_health_check",       # Health metrics
+        "validate_tool_registry",    # Tool validation
+        "introspect_capabilities",   # Self-awareness
         "no_tool_needed",            # Explicit no-op
     ]
 

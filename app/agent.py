@@ -782,6 +782,10 @@ def _build_cached_system_prompt(system_prompt: str, enable_cache: bool = True) -
     ]
 
 
+# Models that support the effort parameter
+EFFORT_SUPPORTED_MODELS = {"claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-4-6"}
+
+
 @retry_with_backoff(max_retries=2, base_delay=1.0, exceptions=(anthropic.APIConnectionError, anthropic.RateLimitError))
 def _call_claude(
     client: anthropic.Anthropic,
@@ -792,6 +796,7 @@ def _call_claude(
     system_prompt: str = None,
     stream_callback: Any = None,
     enable_prompt_cache: bool = True,
+    effort: str = None,  # "low", "medium", "high" - reduces latency on simple queries
 ) -> anthropic.types.Message:
     """
     Call Claude with retry logic and prompt caching (O3).
@@ -800,29 +805,34 @@ def _call_claude(
     - Converts system prompt to cached content blocks
     - Saves up to 90% on input costs for repeated prompts
     - 5-minute cache TTL on Anthropic's side
+
+    Effort Optimization (Tier 4):
+    - Pass effort="low" for simple queries to reduce thinking time
+    - Only supported on Opus 4.5+, Sonnet 4.6
     """
     prompt = system_prompt or AGENT_SYSTEM_PROMPT
 
     # O3: Build cached system prompt
     system_param = _build_cached_system_prompt(prompt, enable_cache=enable_prompt_cache)
 
+    # Build request kwargs
+    request_kwargs = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system_param,
+        "tools": tools,
+        "messages": messages,
+    }
+
+    # Add effort parameter for supported models
+    if effort and model in EFFORT_SUPPORTED_MODELS:
+        request_kwargs["output_config"] = {"effort": effort}
+
     if not stream_callback:
-        response = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_param,
-            tools=tools,
-            messages=messages
-        )
+        response = client.messages.create(**request_kwargs)
     else:
         # Stream text deltas for perceived latency while still returning the final Message
-        with client.messages.stream(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_param,
-            tools=tools,
-            messages=messages,
-        ) as stream:
+        with client.messages.stream(**request_kwargs) as stream:
             for chunk in stream.text_stream:
                 try:
                     stream_callback(chunk)
@@ -858,7 +868,7 @@ def run_agent(
     conversation_history: List[Dict[str, str]] = None,
     namespace: str = "work_projektil",
     scope: Optional[ScopeRef] = None,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-6",
     max_tokens: int = 1024,
     role: str = "assistant",
     auto_detect_role: bool = False,
@@ -1052,10 +1062,11 @@ def run_agent(
     # - Default: cheapest model (gpt-4o-mini) for simple tasks
     # - Task-aware: selects best model based on query type + complexity
     # - Jarvis can override mappings via tools
-    DEFAULT_MODEL = "claude-sonnet-4-20250514"
+    DEFAULT_MODEL = "claude-sonnet-4-6"
     original_model = model
     selected_provider = Provider.ANTHROPIC  # Default provider
     model_selection = None
+    effort_level = "medium"  # Default effort level
 
     multi_model_enabled = os.environ.get("MULTI_MODEL_ENABLED", "true").lower() == "true"
 
@@ -1071,6 +1082,15 @@ def run_agent(
             selected_provider = Provider(model_selection.provider.value)
             state.model = model  # Update AgentState for response building
 
+            # Determine effort level based on complexity (Tier 4 optimization)
+            complexity = getattr(model_selection, 'complexity', 'medium')
+            if complexity == 'low':
+                effort_level = "low"
+            elif complexity == 'high':
+                effort_level = "high"
+            else:
+                effort_level = "medium"
+
             log_with_context(
                 logger, "info", "Dynamic model router: model selected",
                 original_model=original_model,
@@ -1078,12 +1098,14 @@ def run_agent(
                 provider=selected_provider.value,
                 task_type=model_selection.task_type,
                 complexity=model_selection.complexity,
+                effort_level=effort_level,
                 confidence=model_selection.confidence,
                 reason=model_selection.reason,
                 rules_applied=model_selection.rules_applied
             )
             metrics.inc(f"model_router_provider_{selected_provider.value}")
             metrics.inc(f"model_router_task_{model_selection.task_type}")
+            metrics.inc(f"model_router_effort_{effort_level}")
         else:
             log_with_context(
                 logger, "debug", "Dynamic model router: bypassed",
@@ -1658,6 +1680,27 @@ Du hast Zugriff auf {len(tool_names)} Tools.
     except Exception as e:
         log_with_context(logger, "debug", "Auto-learning hints failed", error=str(e))
 
+    # === CORRECTION-CHECK (Learning from Corrections) ===
+    # Check if there are learned corrections relevant to this query
+    try:
+        from .services.correction_learner import get_correction_learner
+        correction_learner = get_correction_learner()
+        relevant_corrections = correction_learner.get_relevant_corrections(
+            query=query,
+            min_confidence=0.5,
+            limit=3
+        )
+        if relevant_corrections:
+            correction_hints = "\n\n## Bekannte Korrekturen (vermeide diese Fehler)\n"
+            for corr in relevant_corrections:
+                correction_hints += f"- **{corr['error_pattern']}** → Richtig: {corr['correct_response']}\n"
+            system_prompt = system_prompt + correction_hints
+            log_with_context(logger, "info", "Correction hints injected",
+                            count=len(relevant_corrections),
+                            patterns=[c['error_pattern'][:30] for c in relevant_corrections])
+    except Exception as e:
+        log_with_context(logger, "debug", "Correction check failed", error=str(e))
+
     # Handle role override from context (e.g., auto-coach mode)
     if context_result.role_override:
         role = context_result.role_override
@@ -1775,7 +1818,11 @@ Du hast Zugriff auf {len(tool_names)} Tools.
         log_with_context(logger, "debug", f"Agent round {round_num + 1}")
 
         try:
-            response = _call_claude(client, model, messages, tools, max_tokens, system_prompt, stream_callback=stream_callback)
+            response = _call_claude(
+                client, model, messages, tools, max_tokens, system_prompt,
+                stream_callback=stream_callback,
+                effort=effort_level  # Tier 4: Pass effort for latency optimization
+            )
         except Exception as e:
             log_with_context(logger, "error", "Agent API call failed", error=str(e))
             metrics.inc("agent_errors")
@@ -1947,6 +1994,45 @@ Du hast Zugriff auf {len(tool_names)} Tools.
                                    facts=learnings["facts_stored"])
             except Exception as learn_err:
                 log_with_context(logger, "debug", "Auto-learning failed", error=str(learn_err))
+
+            # ============ CORRECTION AUTO-DETECTION ============
+            # Detect if user is correcting a previous response
+            try:
+                from .services.correction_learner import get_correction_learner
+                correction_learner = get_correction_learner()
+
+                # Get last assistant response from conversation history
+                last_response = None
+                if conversation_history:
+                    for msg in reversed(conversation_history):
+                        if msg.get("role") == "assistant":
+                            last_response = msg.get("content", "")
+                            break
+
+                log_with_context(logger, "debug", "Correction detection check",
+                               has_history=bool(conversation_history),
+                               has_last_response=bool(last_response),
+                               query_preview=query[:50] if query else None)
+
+                if last_response:
+                    # Check if current query is a correction
+                    detection = correction_learner.detect_correction(query, last_response)
+                    if detection.get("is_correction"):
+                        # Process and store the correction
+                        result = correction_learner.process_correction(
+                            user_message=query,
+                            previous_response=last_response,
+                            session_id=session_id,
+                            user_id=user_id
+                        )
+                        if result.get("processed"):
+                            log_with_context(logger, "info", "Correction detected and stored",
+                                           trigger_type=detection.get("trigger_type"),
+                                           error_type=result.get("error_type"),
+                                           confidence=detection.get("confidence"),
+                                           is_new=result.get("storage", {}).get("is_new"))
+            except Exception as corr_err:
+                log_with_context(logger, "warning", "Correction detection failed", error=str(corr_err))
 
             # ============ PHASE A1: SELF-REFLECTION (AGI) ============
             # Run reflection loop to evaluate and improve

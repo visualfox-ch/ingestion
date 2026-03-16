@@ -716,10 +716,180 @@ def get_n8n_system_health() -> Dict[str, Any]:
         return {"system_status": "error", "error": str(e)}
 
 
+# =============================================================================
+# Phase 2: Auto-Retry with Exponential Backoff (Tier 1 Quick Win)
+# =============================================================================
+
+def process_dead_letter_queue(max_items: int = 20) -> Dict[str, Any]:
+    """
+    Process items in the dead letter queue - cleanup and triage.
+
+    This is a Tier 1 Quick Win that:
+    - Abandons items that have exceeded max retries
+    - Identifies retriable items (for next scheduled workflow run)
+    - Tracks permanent errors for alerting
+
+    Most n8n failures are transient (rate limits, network) and will resolve
+    on the next scheduled run. This function does cleanup and triage.
+
+    Args:
+        max_items: Maximum number of items to process
+
+    Returns:
+        {
+            "processed": int,
+            "abandoned": int,
+            "retriable": int,
+            "permanent_errors": int,
+            "details": [...]
+        }
+    """
+    pending = get_pending_retries(limit=max_items)
+
+    results = {
+        "processed": 0,
+        "abandoned": 0,
+        "retriable": 0,
+        "permanent_errors": 0,
+        "details": []
+    }
+
+    if not pending:
+        log_with_context(logger, "info", "No pending dead letter items")
+        return results
+
+    log_with_context(logger, "info", f"Processing {len(pending)} dead letter items")
+
+    permanent_error_types = {
+        "authentication_error", "invalid_config", "permanent_error",
+        "invalid_payload", "workflow_not_found", "unauthorized"
+    }
+
+    for item in pending:
+        dl_id = item["dl_id"]
+        workflow_name = item["workflow_name"]
+        retry_count = item.get("retry_count", 0)
+        max_retries = item.get("max_retries", 3)
+        error_type = item.get("error_type", "")
+        error_message = item.get("error_message", "")
+
+        results["processed"] += 1
+
+        # Check for permanent errors - abandon immediately
+        if error_type in permanent_error_types:
+            resolve_dead_letter(dl_id, success=False)
+            results["permanent_errors"] += 1
+            results["details"].append({
+                "dl_id": dl_id,
+                "workflow": workflow_name,
+                "status": "abandoned",
+                "reason": f"permanent_error: {error_type}",
+                "error_message": error_message[:200] if error_message else None
+            })
+            log_with_context(logger, "warning", "Permanent error abandoned",
+                            dl_id=dl_id, workflow=workflow_name, error_type=error_type)
+            continue
+
+        # Check if max retries exceeded
+        if retry_count >= max_retries:
+            resolve_dead_letter(dl_id, success=False)
+            results["abandoned"] += 1
+            results["details"].append({
+                "dl_id": dl_id,
+                "workflow": workflow_name,
+                "status": "abandoned",
+                "reason": "max_retries_exceeded",
+                "retry_count": retry_count
+            })
+            log_with_context(logger, "warning", "Max retries exceeded",
+                            dl_id=dl_id, workflow=workflow_name, retry_count=retry_count)
+            continue
+
+        # Transient error - will be retried on next scheduled run
+        # Mark retry attempt to track
+        mark_retry_attempt(dl_id)
+        results["retriable"] += 1
+        results["details"].append({
+            "dl_id": dl_id,
+            "workflow": workflow_name,
+            "status": "retriable",
+            "retry_count": retry_count + 1,
+            "next_action": "await_scheduled_run"
+        })
+
+    log_with_context(logger, "info", "Dead letter processing complete",
+                    processed=results["processed"],
+                    abandoned=results["abandoned"],
+                    retriable=results["retriable"],
+                    permanent_errors=results["permanent_errors"])
+
+    return results
+
+
+def get_n8n_health_summary() -> Dict[str, Any]:
+    """
+    Get a concise n8n health summary for the /health/n8n endpoint.
+
+    Returns:
+        {
+            "status": "healthy" | "degraded" | "unhealthy",
+            "workflows": {
+                "total": int,
+                "up": int,
+                "degraded": int,
+                "down": int
+            },
+            "dead_letter": {
+                "pending": int,
+                "recent_24h": int
+            },
+            "sla_compliance": float,
+            "critical_healthy": bool
+        }
+    """
+    try:
+        system_health = get_n8n_system_health()
+        dl_stats = get_dead_letter_stats()
+
+        # Map system status to health status
+        status_map = {
+            "up": "healthy",
+            "degraded": "degraded",
+            "down": "unhealthy",
+            "unknown": "unknown",
+            "error": "error"
+        }
+
+        return {
+            "status": status_map.get(system_health.get("system_status", "unknown"), "unknown"),
+            "workflows": {
+                "total": system_health.get("total_workflows", 0),
+                "up": system_health.get("workflows_up", 0),
+                "degraded": system_health.get("workflows_degraded", 0),
+                "down": system_health.get("workflows_down", 0)
+            },
+            "dead_letter": {
+                "pending": dl_stats.get("total_pending", 0),
+                "recent_24h": dl_stats.get("recent_24h_failures", 0)
+            },
+            "sla_compliance": system_health.get("avg_success_rate", 1.0),
+            "critical_healthy": system_health.get("critical_workflows_healthy", True),
+            "unhealthy_critical": system_health.get("unhealthy_critical", []),
+            "checked_at": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        log_with_context(logger, "error", "Failed to get n8n health summary", error=str(e))
+        return {
+            "status": "error",
+            "error": str(e),
+            "checked_at": datetime.now(timezone.utc).isoformat()
+        }
+
+
 def detect_failure_patterns() -> Dict[str, Any]:
     """
     Detect failure patterns and root causes for n8n workflows.
-    
+
     Returns failure analysis with common error types and affected workflows
     """
     try:

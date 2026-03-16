@@ -801,11 +801,208 @@ elements.modal.addEventListener('keydown', (e) => {
 });
 
 // =============================================================================
+// HEALTH STATUS FUNCTIONS (OpenClaw Enhancement)
+// =============================================================================
+
+async function fetchHealth() {
+    try {
+        const response = await fetch('/health');
+        if (!response.ok) throw new Error('Health endpoint failed');
+        const data = await response.json();
+        renderHealth(data);
+        return data;
+    } catch (error) {
+        console.error('Error fetching health:', error);
+        // Show error state
+        const healthStatus = document.getElementById('health-status');
+        if (healthStatus) {
+            healthStatus.textContent = 'Error';
+            healthStatus.className = 'badge danger';
+        }
+    }
+}
+
+function renderHealth(data) {
+    const checks = data.checks || {};
+    const summary = data.summary || {};
+
+    // Update overall status badge
+    const healthStatus = document.getElementById('health-status');
+    if (healthStatus) {
+        const healthy = summary.healthy || 0;
+        const total = summary.total_checks || 0;
+        healthStatus.textContent = `${healthy}/${total} OK`;
+        healthStatus.className = data.status === 'healthy' ? 'badge' : 'badge warning';
+    }
+
+    // Helper to update a health card
+    function updateHealthCard(id, status, value) {
+        const card = document.getElementById(id);
+        const valueEl = document.getElementById(`${id}-value`);
+        const indicator = card ? card.querySelector('.health-indicator') : null;
+
+        if (card) {
+            card.className = 'health-card';
+            if (status === 'degraded' || status === 'warning') {
+                card.classList.add('degraded');
+            } else if (status !== 'healthy') {
+                card.classList.add('unhealthy');
+            }
+        }
+        if (valueEl) valueEl.textContent = value;
+        if (indicator) {
+            indicator.className = 'health-indicator';
+            if (status === 'degraded' || status === 'warning') {
+                indicator.classList.add('degraded');
+            } else if (status !== 'healthy') {
+                indicator.classList.add('unhealthy');
+            }
+        }
+    }
+
+    // API - count healthy checks
+    const apiHealthy = Object.values(checks).filter(c => c.status === 'healthy').length;
+    const apiTotal = Object.keys(checks).length;
+    updateHealthCard('health-api',
+        apiHealthy === apiTotal ? 'healthy' : (apiHealthy > apiTotal/2 ? 'degraded' : 'unhealthy'),
+        `${apiHealthy}/${apiTotal} services`
+    );
+
+    // Database
+    const postgres = checks.postgres || {};
+    const sqlite = checks.sqlite || {};
+    const dbOk = postgres.status === 'healthy' && sqlite.status === 'healthy';
+    updateHealthCard('health-db',
+        dbOk ? 'healthy' : (postgres.status === 'healthy' || sqlite.status === 'healthy' ? 'degraded' : 'unhealthy'),
+        dbOk ? 'All OK' : 'Partial'
+    );
+
+    // Search
+    const qdrant = checks.qdrant || {};
+    const meili = checks.meilisearch || {};
+    const searchOk = qdrant.status === 'healthy';
+    updateHealthCard('health-search',
+        searchOk ? 'healthy' : 'unhealthy',
+        qdrant.collections ? `${qdrant.collections} collections` : 'Unknown'
+    );
+
+    // LLM
+    const llm = checks.llm_providers || {};
+    const anthropicOk = llm.anthropic?.status === 'healthy';
+    const openaiOk = llm.openai?.status === 'healthy';
+    updateHealthCard('health-llm',
+        anthropicOk && openaiOk ? 'healthy' : (anthropicOk || openaiOk ? 'degraded' : 'unhealthy'),
+        anthropicOk && openaiOk ? 'Both OK' : (anthropicOk ? 'Anthropic' : (openaiOk ? 'OpenAI' : 'Down'))
+    );
+
+    // Telegram
+    const telegram = checks.telegram_bot || {};
+    updateHealthCard('health-telegram',
+        telegram.status === 'healthy' ? 'healthy' : 'unhealthy',
+        telegram.running ? 'Running' : 'Stopped'
+    );
+
+    // Scheduler
+    const scheduler = checks.scheduler || {};
+    updateHealthCard('health-scheduler',
+        scheduler.status === 'healthy' ? 'healthy' : 'unhealthy',
+        scheduler.job_count ? `${scheduler.job_count} jobs` : 'Unknown'
+    );
+}
+
+// =============================================================================
+// CONTAINER STATUS FUNCTIONS (OpenClaw Enhancement)
+// =============================================================================
+
+async function fetchContainers() {
+    try {
+        const response = await fetch('/dashboard/api/containers');
+        if (!response.ok) {
+            // If endpoint doesn't exist yet, show placeholder
+            if (response.status === 404) {
+                renderContainersPlaceholder();
+                return;
+            }
+            throw new Error('Container endpoint failed');
+        }
+        const data = await response.json();
+        renderContainers(data);
+        return data;
+    } catch (error) {
+        console.error('Error fetching containers:', error);
+        renderContainersPlaceholder();
+    }
+}
+
+function renderContainersPlaceholder() {
+    const grid = document.getElementById('container-grid');
+    const countBadge = document.getElementById('container-count');
+
+    if (countBadge) countBadge.textContent = '--';
+    if (grid) {
+        grid.innerHTML = `
+            <div class="empty-state">
+                <p>Container status not available</p>
+                <p style="font-size: 0.75rem; color: var(--text-muted);">SSH access required for live container data</p>
+            </div>
+        `;
+    }
+}
+
+function renderContainers(data) {
+    const grid = document.getElementById('container-grid');
+    const countBadge = document.getElementById('container-count');
+
+    if (!grid) return;
+
+    const containers = data.containers || [];
+
+    if (countBadge) {
+        const running = containers.filter(c => c.status.includes('Up')).length;
+        countBadge.textContent = `${running}/${containers.length}`;
+    }
+
+    if (containers.length === 0) {
+        grid.innerHTML = '<div class="empty-state"><p>No containers found</p></div>';
+        return;
+    }
+
+    grid.innerHTML = containers.map(container => {
+        let statusClass = '';
+        let statusText = 'Up';
+
+        if (container.status.includes('Restarting')) {
+            statusClass = 'restarting';
+            statusText = 'Restarting';
+        } else if (container.status.includes('Exit')) {
+            statusClass = 'exited';
+            statusText = 'Exited';
+        } else if (container.status.includes('unhealthy')) {
+            statusClass = 'unhealthy';
+            statusText = 'Unhealthy';
+        } else if (container.status.includes('healthy')) {
+            statusText = 'Healthy';
+        } else if (container.status.includes('Up')) {
+            statusText = container.status.replace('Up ', '').split(' ')[0];
+        }
+
+        const name = container.name.replace('jarvis-', '');
+
+        return `
+            <div class="container-card ${statusClass}">
+                <span class="container-name" title="${container.name}">${name}</span>
+                <span class="container-status ${statusClass}">${statusText}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+// =============================================================================
 // INITIALIZATION
 // =============================================================================
 
 async function init() {
-    console.log('Jarvis Dashboard initializing (Tier-2 Enhanced)...');
+    console.log('Jarvis Dashboard initializing (Tier-2 Enhanced + OpenClaw)...');
 
     // Set initial ARIA states
     elements.modal.setAttribute('aria-hidden', 'true');
@@ -815,6 +1012,10 @@ async function init() {
 
     // Initial fetch
     await refreshAll();
+
+    // Fetch health and container status (OpenClaw enhancements)
+    await fetchHealth();
+    await fetchContainers();
 
     // Set up auto-refresh with staggered intervals to reduce server load
     setInterval(fetchPending, CONFIG.refreshInterval);
@@ -826,7 +1027,11 @@ async function init() {
     }, CONFIG.metricsRefreshInterval);
     setInterval(fetchUncertainty, CONFIG.metricsRefreshInterval);
 
-    console.log('Dashboard initialized successfully');
+    // Refresh health and containers every 30 seconds
+    setInterval(fetchHealth, 30000);
+    setInterval(fetchContainers, 60000);
+
+    console.log('Dashboard initialized successfully (OpenClaw Enhanced)');
 
     // Log configuration for debugging
     console.log('Config:', {

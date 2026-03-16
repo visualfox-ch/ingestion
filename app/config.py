@@ -98,7 +98,7 @@ except json.JSONDecodeError:
 # Agent guardrails
 AGENT_MAX_QUERY_CHARS = int(os.getenv("JARVIS_AGENT_MAX_QUERY_CHARS", "8000"))
 AGENT_MAX_CONTEXT_CHARS = int(os.getenv("JARVIS_AGENT_MAX_CONTEXT_CHARS", "20000"))
-AGENT_MAX_ROUNDS = int(os.getenv("JARVIS_AGENT_MAX_ROUNDS", "5"))
+AGENT_MAX_ROUNDS = int(os.getenv("JARVIS_AGENT_MAX_ROUNDS", "8"))  # Increased for self-improvement
 AGENT_TIMEOUT_SECONDS = int(os.getenv("JARVIS_AGENT_TIMEOUT_SECONDS", "45"))
 
 # =============================================================================
@@ -125,9 +125,9 @@ MEILISEARCH_PORT = os.getenv("MEILISEARCH_PORT", "7700")
 # =============================================================================
 # LLM MODELS & PROVIDERS
 # =============================================================================
-# Default models for backward compatibility
-DEFAULT_MODEL = os.getenv("JARVIS_DEFAULT_MODEL", "claude-3-5-sonnet-20241022")
-FAST_MODEL = os.getenv("JARVIS_FAST_MODEL", "claude-3-5-haiku-20241022")
+# Default models (using current model aliases)
+DEFAULT_MODEL = os.getenv("JARVIS_DEFAULT_MODEL", "claude-sonnet-4-6")
+FAST_MODEL = os.getenv("JARVIS_FAST_MODEL", "claude-haiku-4-5")
 
 # Multi-provider configuration
 LLM_ROUTER_ENABLED = os.getenv("JARVIS_LLM_ROUTER_ENABLED", "true").lower() == "true"

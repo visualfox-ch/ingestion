@@ -9,7 +9,7 @@ Phase 0 tests (Feb 4, 2026):
 
 import pytest
 import asyncio
-from ingestion.app.diff_gate import (
+from app.diff_gate import (
     DiffGateValidator,
     CodeChange,
     RiskClass,

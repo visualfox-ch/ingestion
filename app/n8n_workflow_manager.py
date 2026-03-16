@@ -15,8 +15,8 @@ from .observability import get_logger, log_with_context
 logger = get_logger("jarvis.n8n_workflows")
 
 # n8n API Configuration
-N8N_HOST = os.environ.get("N8N_HOST", "192.168.1.103")
-N8N_PORT = int(os.environ.get("N8N_PORT", "25678"))
+N8N_HOST = os.environ.get("N8N_HOST", "n8n")  # Docker DNS (internal)
+N8N_PORT = int(os.environ.get("N8N_PORT", "5678"))  # Internal port
 N8N_API_BASE = f"http://{N8N_HOST}:{N8N_PORT}/api/v1"
 N8N_API_KEY = os.environ.get("N8N_API_KEY", "")  # Set this in environment
 N8N_TIMEOUT = int(os.environ.get("N8N_TIMEOUT", "30"))
