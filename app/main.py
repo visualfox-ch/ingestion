@@ -370,6 +370,8 @@ class AgentRequest(BaseModel):
     is_session_start: bool = False  # Phase 20: Triggers full context loading
     # Vision support (Jarvis Wish)
     images: Optional[List[Dict[str, str]]] = None  # [{"type": "base64", "media_type": "image/jpeg", "data": "..."}]
+    # Optional: provide conversation history directly (overrides DB load)
+    conversation_history: Optional[List[Dict[str, str]]] = None
 
     def get_scope(self) -> ScopeRef:
         """Return scope, falling back to legacy namespace or channel defaults."""
@@ -2703,7 +2705,8 @@ def agent_chat(req: AgentRequest, request: Request):
                     import uuid as _uuid
                     session_id = req.session_id or str(_uuid.uuid4())[:8]
                     state_db.create_session(session_id, request_namespace)
-                    conversation_history = state_db.get_conversation_history(session_id, limit=10)
+                    # Use provided conversation_history if available, else load from DB
+                    conversation_history = req.conversation_history or state_db.get_conversation_history(session_id, limit=10)
 
                     result = agent.run_agent(
                         query=req.query,
@@ -2811,8 +2814,8 @@ def agent_chat(req: AgentRequest, request: Request):
         # Ensure session exists
         state_db.create_session(session_id, request_namespace)
 
-        # Load conversation history
-        conversation_history = state_db.get_conversation_history(session_id, limit=10)
+        # Load conversation history (use provided if available)
+        conversation_history = req.conversation_history or state_db.get_conversation_history(session_id, limit=10)
 
         # Run agent
         result = agent.run_agent(

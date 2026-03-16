@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 ._*
 **/._*
+app_deploy_tmp_*/

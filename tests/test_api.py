@@ -152,6 +152,35 @@ def test_agent_accepts_missing_namespace_with_telegram_default_scope(monkeypatch
     assert call_log[0]["scope"].visibility == "private"
 
 
+def test_agent_prefers_provided_conversation_history_over_db(monkeypatch):
+    call_log = []
+    _patch_agent_dependencies(monkeypatch, call_log)
+
+    monkeypatch.setattr(
+        "app.main.state_db.get_conversation_history",
+        lambda *args, **kwargs: [{"role": "assistant", "content": "from-db"}],
+    )
+
+    supplied_history = [
+        {"role": "user", "content": "from-request-1"},
+        {"role": "assistant", "content": "from-request-2"},
+    ]
+
+    resp = client.post(
+        "/agent",
+        json={
+            "query": "contract test direct history",
+            "stream": False,
+            "source": "api",
+            "conversation_history": supplied_history,
+        },
+    )
+
+    assert resp.status_code == 200
+    assert len(call_log) == 1
+    assert call_log[0]["conversation_history"] == supplied_history
+
+
 def test_agent_rejects_missing_namespace_and_scope():
     resp = client.post(
         "/agent",
