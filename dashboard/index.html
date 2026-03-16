@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Jarvis Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+                /* Modal styles */
+                .modal {
+                    display: none;
+                    position: fixed;
+                    z-index: 1000;
+                    left: 0; top: 0; width: 100vw; height: 100vh;
+                    background: rgba(0,0,0,0.3);
+                    align-items: center; justify-content: center;
+                }
+                .modal-content {
+                    background: #fff; padding: 2em; border-radius: 8px; min-width: 300px; max-width: 90vw;
+                    box-shadow: 0 2px 16px rgba(0,0,0,0.2);
+                }
+                .modal-close { float: right; cursor: pointer; font-size: 1.2em; color: #888; }
+        body { font-family: sans-serif; margin: 2em; background: #f7f7fa; }
+        h1 { color: #2a3a4a; }
+        #tasks, #alerts { margin-bottom: 2em; }
+        table { border-collapse: collapse; width: 100%; background: #fff; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background: #e3eaf2; }
+        .alert { color: #b30000; font-weight: bold; }
+        .filter-bar { margin-bottom: 1em; }
+        .filter-bar label { margin-right: 1em; }
+        #chart-container { max-width: 600px; margin: 2em 0; }
+    </style>
+</head>
+<body>
+    <h1>Jarvis Dashboard</h1>
+    <div class="filter-bar">
+        <label>Status:
+            <select id="statusFilter">
+                <option value="">All</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
+            </select>
+        </label>
+        <label>Type:
+            <select id="typeFilter">
+                <option value="">All</option>
+                <option value="fast">Fast</option>
+                <option value="full">Full</option>
+            </select>
+        </label>
+    </div>
+    <section id="tasks">
+        <h2>Active Tasks</h2>
+        <table id="taskTable">
+            <thead>
+                <tr><th>ID</th><th>Status</th><th>Type</th><th>Owner</th><th>Start</th></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </section>
+    <div id="taskModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" id="closeModal">&times;</span>
+            <h3>Task Details</h3>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+    <div id="chart-container">
+        <canvas id="statusChart"></canvas>
+    </div>
+    <section id="alerts">
+        <h2>Alerts</h2>
+        <ul id="alertList"></ul>
+    </section>
+    <script>
+        let allTasks = [];
+        async function fetchTasks() {
+            const res = await fetch('/dashboard/tasks');
+            return await res.json();
+        }
+        async function fetchAlerts() {
+            const res = await fetch('/dashboard/alerts');
+            return await res.json();
+        }
+        function renderTasks(tasks) {
+            const tbody = document.querySelector('#taskTable tbody');
+            tbody.innerHTML = '';
+            for (const t of tasks) {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${t.id}</td><td>${t.status}</td><td>${t.type}</td><td>${t.owner}</td><td>${t.start}</td>`;
+                row.addEventListener('click', () => showTaskModal(t));
+                tbody.appendChild(row);
+            }
+        }
+
+        function showTaskModal(task) {
+            const modal = document.getElementById('taskModal');
+            const body = document.getElementById('modalBody');
+            body.innerHTML = '';
+            for (const key in task) {
+                body.innerHTML += `<b>${key}:</b> ${task[key]}<br>`;
+            }
+            modal.style.display = 'flex';
+        }
+        document.getElementById('closeModal').onclick = function() {
+            document.getElementById('taskModal').style.display = 'none';
+        };
+        window.onclick = function(event) {
+            const modal = document.getElementById('taskModal');
+            if (event.target === modal) modal.style.display = 'none';
+        };
+        function renderAlerts(alerts) {
+            const ul = document.getElementById('alertList');
+            ul.innerHTML = '';
+            for (const a of alerts) {
+                ul.innerHTML += `<li class="alert">${a.message}</li>`;
+            }
+        }
+        function updateChart(tasks) {
+            const ctx = document.getElementById('statusChart').getContext('2d');
+            const statusCounts = tasks.reduce((acc, t) => {
+                acc[t.status] = (acc[t.status] || 0) + 1;
+                return acc;
+            }, {});
+            const chartData = {
+                labels: Object.keys(statusCounts),
+                datasets: [{
+                    label: 'Task Status',
+                    data: Object.values(statusCounts),
+                    backgroundColor: ['#4caf50', '#e53935', '#ffb300'],
+                }]
+            };
+            if (window.statusChart) window.statusChart.destroy();
+            window.statusChart = new Chart(ctx, {
+                type: 'bar',
+                data: chartData,
+                options: { responsive: true, plugins: { legend: { display: false } } }
+            });
+        }
+        function applyFilters() {
+            const status = document.getElementById('statusFilter').value;
+            const type = document.getElementById('typeFilter').value;
+            let filtered = allTasks;
+            if (status) filtered = filtered.filter(t => t.status === status);
+            if (type) filtered = filtered.filter(t => t.type === type);
+            renderTasks(filtered);
+            updateChart(filtered);
+        }
+        // Initial load
+        fetchTasks().then(tasks => {
+            allTasks = tasks;
+            applyFilters();
+        });
+        fetchAlerts().then(renderAlerts);
+        // WebSocket for live updates
+        const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/dashboard/ws');
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'task_update') fetchTasks().then(tasks => { allTasks = tasks; applyFilters(); });
+            if (data.type === 'alert') fetchAlerts().then(renderAlerts);
+        };
+        document.getElementById('statusFilter').addEventListener('change', applyFilters);
+        document.getElementById('typeFilter').addEventListener('change', applyFilters);
+    </script>
+</body>
+</html>

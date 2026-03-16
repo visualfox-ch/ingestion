@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Incident History - Jarvis Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #181A1B; color: #fff; }
+        .container { padding: 20px; }
+        .incident-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .incident-table th, .incident-table td { border: 1px solid #333; padding: 8px; }
+        .incident-table th { background: #222; }
+        .status-ok { color: #4caf50; }
+        .status-warning { color: #ff9800; }
+        .status-critical { color: #f44336; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Incident History</h1>
+    <table class="incident-table">
+        <thead>
+            <tr><th>ID</th><th>Type</th><th>Status</th><th>Timestamp</th><th>Details</th></tr>
+        </thead>
+        <tbody id="incidentBody"></tbody>
+    </table>
+</div>
+<script>
+fetch('/dashboard/api/incidents').then(r => r.json()).then(data => {
+    const tbody = document.getElementById('incidentBody');
+    data.incidents.forEach(i => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${i.id}</td><td>${i.type}</td><td class="status-${i.status}">${i.status}</td><td>${i.timestamp}</td><td>${i.details}</td>`;
+        tbody.appendChild(row);
+    });
+});
+</script>
+</body>
+</html>

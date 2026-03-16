@@ -1,0 +1,9 @@
+{
+  "base": "USD",
+  "target": "CHF",
+  "usd_chf": 0.76703,
+  "as_of": "2026-02-10",
+  "source": "Frankfurter (ECB reference rates)",
+  "locale": "de-CH",
+  "updated": "2026-02-10T16:50:23.216448Z"
+}

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Service Details - Jarvis Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #181A1B; color: #fff; }
+        .container { padding: 20px; }
+        .service-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .service-table th, .service-table td { border: 1px solid #333; padding: 8px; }
+        .service-table th { background: #222; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Service Details</h1>
+    <table class="service-table">
+        <thead>
+            <tr><th>Name</th><th>Status</th><th>Version</th><th>Config</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="serviceBody"></tbody>
+    </table>
+</div>
+<script>
+fetch('/dashboard/api/services').then(r => r.json()).then(data => {
+    const tbody = document.getElementById('serviceBody');
+    data.services.forEach(s => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${s.name}</td><td>${s.status}</td><td>${s.version}</td><td>${s.config}</td><td><button onclick="alert('Restart ' + s.name)">Restart</button></td>`;
+        tbody.appendChild(row);
+    });
+});
+</script>
+</body>
+</html>
