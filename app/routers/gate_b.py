@@ -10,6 +10,7 @@ import json
 import os
 import hashlib
 import hmac
+import base64
 from datetime import datetime, timedelta
 import logging
 
@@ -111,6 +112,34 @@ def verify_approval_token(approval_token: str, proposal_id: str, timestamp: str,
     """Verify HMAC signature"""
     expected = generate_approval_token(proposal_id, timestamp, approver)
     return hmac.compare_digest(approval_token, expected)
+
+
+def _extract_approver_from_bearer(authorization: str) -> str:
+    """Best-effort approver extraction from bearer token payload."""
+    default_approver = os.getenv("GATE_B_DEFAULT_APPROVER", "unknown_approver")
+
+    try:
+        token = authorization.split(" ", 1)[1].strip()
+    except Exception:
+        return default_approver
+
+    # JWT structure: header.payload.signature
+    if token.count(".") != 2:
+        return default_approver
+
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64.encode()).decode())
+    except Exception:
+        return default_approver
+
+    for key in ("email", "upn", "preferred_username", "sub"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return default_approver
 
 def get_proposal_by_id(proposal_id: str) -> Optional[Dict]:
     """Retrieve a proposal by ID"""
@@ -228,8 +257,7 @@ async def approve_proposal(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing authorization header")
     
-    # Get human ID from token (simplified - in production use proper JWT)
-    approver = "micha@projektil.ch"  # TODO: extract from token
+    approver = _extract_approver_from_bearer(authorization)
     
     proposal = get_proposal_by_id(proposal_id)
     if not proposal:
@@ -334,7 +362,14 @@ async def execute_proposal(
         raise HTTPException(status_code=403, detail="Invalid approval token")
     
     # Check if approval expired (2 hour window)
-    approved_at = datetime.fromisoformat(proposal.get("approved_at", ""))
+    approved_at_raw = proposal.get("approved_at")
+    if not approved_at_raw:
+        raise HTTPException(status_code=400, detail="Proposal is missing approved_at timestamp")
+    try:
+        approved_at = datetime.fromisoformat(approved_at_raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Proposal has invalid approved_at timestamp")
+
     if datetime.utcnow() - approved_at > timedelta(hours=2):
         raise HTTPException(status_code=400, detail="Approval expired (> 2 hours old)")
     

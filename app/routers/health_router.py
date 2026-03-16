@@ -218,6 +218,53 @@ def health_check():
     }
 
 
+@router.get("/health/quick")
+def health_quick():
+    """Quick health check - just returns OK if API is running"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+
+@router.get("/health/n8n")
+def health_n8n():
+    """
+    n8n workflow health summary (Tier 1 Quick Win).
+
+    Returns workflow health status, SLA compliance, and dead letter queue status.
+    """
+    try:
+        from ..n8n_reliability import get_n8n_health_summary
+        return get_n8n_health_summary()
+    except Exception as e:
+        logger.error(f"n8n health check failed: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/health/detailed")
+def health_detailed():
+    """
+    Enhanced health check with actionable metrics.
+    Includes latency measurements, resource usage, and recommendations.
+    """
+    try:
+        from ..health_checks import get_health_status
+        return get_health_status()
+    except ImportError as e:
+        # Fallback to simple version without psutil
+        try:
+            from ..health_checks_simple import get_simple_health_status
+            result = get_simple_health_status()
+            result["warning"] = "Using simplified health check (psutil not available)"
+            return result
+        except Exception as fallback_e:
+            return {"error": f"Both health check versions failed: {str(e)} / {str(fallback_e)}", "status": "error"}
+    except Exception as e:
+        return {"error": f"Health check failed: {str(e)}", "status": "error"}
+
+
 # /metrics and /metrics/scientific moved to routers/metrics_router.py
 
 

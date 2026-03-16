@@ -76,6 +76,97 @@ def get_metrics():
     return base_metrics
 
 
+@router.get("/metrics/system")
+def get_system_metrics():
+    """
+    System resource metrics for Jarvis components.
+
+    Returns RAM, CPU, Disk usage for quick health checks.
+    Detailed metrics available via Prometheus/Grafana (cAdvisor, Node Exporter).
+    """
+    import subprocess
+    import resource
+    from ..postgres_state import get_cursor
+
+    result = {
+        "process": {},
+        "containers": [],
+        "disk": {},
+        "source_tracking": {}
+    }
+
+    # Process memory (this container)
+    try:
+        rusage = resource.getrusage(resource.RUSAGE_SELF)
+        result["process"] = {
+            "memory_mb": round(rusage.ru_maxrss / 1024, 2),
+            "user_time_s": round(rusage.ru_utime, 2),
+            "system_time_s": round(rusage.ru_stime, 2)
+        }
+    except Exception as e:
+        result["process"] = {"error": str(e)}
+
+    # Docker stats via docker CLI (if available)
+    try:
+        docker_cmd = "docker stats --no-stream --format '{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}}' 2>/dev/null || true"
+        proc = subprocess.run(docker_cmd, shell=True, capture_output=True, text=True, timeout=10)
+        if proc.stdout.strip():
+            containers = []
+            for line in proc.stdout.strip().split('\n'):
+                parts = line.split(',')
+                if len(parts) >= 4:
+                    containers.append({
+                        "name": parts[0],
+                        "cpu": parts[1],
+                        "memory": parts[2],
+                        "memory_percent": parts[3]
+                    })
+            result["containers"] = containers
+    except Exception as e:
+        result["containers"] = {"error": str(e)}
+
+    # Disk usage for BRAIN volume
+    try:
+        brain_root = os.environ.get("BRAIN_ROOT", "/brain")
+        if os.path.exists(brain_root):
+            stat = os.statvfs(brain_root)
+            total_gb = (stat.f_blocks * stat.f_frsize) / (1024**3)
+            free_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
+            used_gb = total_gb - free_gb
+            result["disk"] = {
+                "path": brain_root,
+                "total_gb": round(total_gb, 2),
+                "used_gb": round(used_gb, 2),
+                "free_gb": round(free_gb, 2),
+                "used_percent": round((used_gb / total_gb) * 100, 1) if total_gb > 0 else 0
+            }
+    except Exception as e:
+        result["disk"] = {"error": str(e)}
+
+    # Source tracking stats (messages by source)
+    try:
+        with get_cursor() as cur:
+            cur.execute("""
+                SELECT source, COUNT(*) as count
+                FROM message
+                WHERE source IS NOT NULL
+                GROUP BY source
+                ORDER BY count DESC
+            """)
+            rows = cur.fetchall()
+            result["source_tracking"] = {row["source"]: row["count"] for row in rows}
+
+            cur.execute("SELECT COUNT(*) as total FROM message")
+            result["source_tracking"]["_total_messages"] = cur.fetchone()["total"]
+
+            cur.execute("SELECT COUNT(*) as legacy FROM message WHERE source IS NULL")
+            result["source_tracking"]["_legacy_no_source"] = cur.fetchone()["legacy"]
+    except Exception as e:
+        result["source_tracking"] = {"error": str(e)}
+
+    return result
+
+
 @router.get("/metrics/dashboard")
 def get_metrics_dashboard():
     """
@@ -272,6 +363,14 @@ def get_prometheus_metrics():
     except Exception as e:
         logger.warning("Could not export tool loop metrics", extra={"error": str(e)})
 
+    # RAG Quality metrics from Langfuse traces (Tier 1 Evolution)
+    try:
+        from ..tool_modules.rag_quality_tools import get_prometheus_rag_metrics
+        rag_quality_prometheus = get_prometheus_rag_metrics()
+        lines.append(rag_quality_prometheus)
+    except Exception as e:
+        logger.warning("Could not export RAG quality metrics", extra={"error": str(e)})
+
     # Core Prometheus metrics registry (RED, fast-path, facette, etc.)
     try:
         registry_metrics = generate_latest(REGISTRY).decode("utf-8")
@@ -335,6 +434,44 @@ def get_rag_metrics():
     """Get RAG (Retrieval-Augmented Generation) quality metrics"""
     from ..observability import rag_metrics
     return rag_metrics.get_stats()
+
+
+@router.get("/metrics/rag/quality")
+def get_rag_quality_evaluation():
+    """
+    Get RAG quality evaluation from Langfuse traces.
+
+    Evaluates faithfulness, relevance, and context utilization.
+    """
+    try:
+        from ..tool_modules.rag_quality_tools import evaluate_rag_quality
+        return evaluate_rag_quality(hours=24, limit=100)
+    except Exception as e:
+        logger.warning("Could not get RAG quality evaluation", extra={"error": str(e)})
+        return {"error": str(e)}
+
+
+@router.get("/metrics/rag/quality/issues")
+def get_rag_quality_issues():
+    """Get RAG quality issues and recommendations."""
+    try:
+        from ..tool_modules.rag_quality_tools import get_quality_issues
+        return get_quality_issues(threshold=0.5)
+    except Exception as e:
+        logger.warning("Could not get RAG quality issues", extra={"error": str(e)})
+        return {"error": str(e)}
+
+
+@router.get("/metrics/rag/quality/prometheus")
+def get_rag_quality_prometheus():
+    """Export RAG quality metrics in Prometheus format."""
+    from fastapi.responses import PlainTextResponse
+    try:
+        from ..tool_modules.rag_quality_tools import get_prometheus_rag_metrics
+        return PlainTextResponse(get_prometheus_rag_metrics(), media_type="text/plain")
+    except Exception as e:
+        logger.warning("Could not get RAG quality prometheus metrics", extra={"error": str(e)})
+        return PlainTextResponse(f"# Error: {e}", media_type="text/plain")
 
 
 @router.get("/metrics/proactive")

@@ -3,16 +3,46 @@ from __future__ import annotations
 
 from typing import Optional, Dict, Any, List
 
-from fastapi import APIRouter, Request, Depends, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ..observability import get_logger
 from ..auth import auth_dependency
 from ..tracing import get_current_user_id
 from .. import memory_service
+from app.memory.retrieval import QdrantSemanticRetrievalEngine
 
+# Initialize logger and router BEFORE they are used
 logger = get_logger("jarvis.memory_router")
 router = APIRouter()
+
+
+# --- Semantische Suche via Qdrant ---
+class SemanticSearchRequest(BaseModel):
+    query: str
+    top_k: int = 10
+    namespace: Optional[str] = None
+
+
+@router.post("/memory/semantic_search", response_model=Dict[str, Any])
+async def semantic_search_endpoint(
+    req: SemanticSearchRequest,
+    request: Request = None
+):
+    """Semantische Suche in MemoryFacts via Qdrant Vektor-DB."""
+    try:
+        engine = QdrantSemanticRetrievalEngine()
+        results = engine.semantic_search(req.query, top_k=req.top_k, namespace=req.namespace)
+        return {
+            "status": "success",
+            "count": len(results),
+            "results": [
+                {"score": r["score"], "fact": r["fact"].to_dict()} for r in results
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Semantic search failed: {e}")
+        return {"status": "error", "error": str(e)}
 
 
 class AutonomySettingsRequest(BaseModel):
@@ -533,12 +563,84 @@ def add_fact(fact: str, category: str):
     return {"fact_id": fact_id, "status": "stored"}
 
 
+# === Privacy/Forgetting Controls ===
+from fastapi import Query
+
+@router.delete("/memory/facts/{fact_id}")
+def delete_fact(fact_id: str):
+    """Soft-delete (deactivate) a fact by ID."""
+    from .. import memory_store
+    success = memory_store.deactivate_fact(fact_id)
+    logger.info(f"Fact deleted", extra={"fact_id": fact_id, "deleted": success})
+    return {"fact_id": fact_id, "deleted": success}
+
+
+@router.delete("/memory/facts")
+def delete_facts_bulk(
+    category: str = Query(None, description="Category to delete (optional)"),
+    all_facts: bool = Query(False, description="Delete ALL facts (dangerous, requires all_facts=true)")
+):
+    """Bulk soft-delete facts by category or all (privacy/GDPR)."""
+    from .. import memory_store
+    if not category and not all_facts:
+        logger.warning("Bulk fact delete attempted without category or all_facts flag")
+        return {"deleted": 0, "error": "Specify category or set all_facts=true"}
+    conn = memory_store._get_conn()
+    if all_facts:
+        cursor = conn.execute("UPDATE facts SET active = 0, updated_at = ? WHERE active = 1", (datetime.now(memory_store.ZURICH_TZ).isoformat(timespec="seconds"),))
+    else:
+        cursor = conn.execute("UPDATE facts SET active = 0, updated_at = ? WHERE active = 1 AND category = ?", (datetime.now(memory_store.ZURICH_TZ).isoformat(timespec="seconds"), category))
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    logger.info(f"Bulk fact delete", extra={"deleted": deleted, "category": category, "all_facts": all_facts})
+    return {"deleted": deleted, "category": category if category else None, "all_facts": all_facts}
+
+
 @router.get("/memory/entities")
 def get_entities(entity_type: Optional[str] = None, limit: int = 50):
     """List stored entities"""
     from .. import memory_store
     entities = memory_store.get_entities(entity_type=entity_type, limit=limit)
     return {"entities": entities, "count": len(entities)}
+
+
+# === Privacy/Forgetting Controls: Entity Deletion ===
+from fastapi import Query
+
+@router.delete("/memory/entities/{entity_id}")
+def delete_entity(entity_id: str):
+    """Delete an entity by ID (hard delete)."""
+    from .. import memory_store
+    conn = memory_store._get_conn()
+    cursor = conn.execute("DELETE FROM entities WHERE id = ?", (entity_id,))
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    logger.info(f"Entity deleted", extra={"entity_id": entity_id, "deleted": deleted > 0})
+    return {"entity_id": entity_id, "deleted": deleted > 0}
+
+
+@router.delete("/memory/entities")
+def delete_entities_bulk(
+    entity_type: str = Query(None, description="Entity type to delete (optional)"),
+    all_entities: bool = Query(False, description="Delete ALL entities (dangerous, requires all_entities=true)")
+):
+    """Bulk delete entities by type or all (privacy/GDPR)."""
+    from .. import memory_store
+    if not entity_type and not all_entities:
+        logger.warning("Bulk entity delete attempted without entity_type or all_entities flag")
+        return {"deleted": 0, "error": "Specify entity_type or set all_entities=true"}
+    conn = memory_store._get_conn()
+    if all_entities:
+        cursor = conn.execute("DELETE FROM entities")
+    else:
+        cursor = conn.execute("DELETE FROM entities WHERE entity_type = ?", (entity_type,))
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    logger.info(f"Bulk entity delete", extra={"deleted": deleted, "entity_type": entity_type, "all_entities": all_entities})
+    return {"deleted": deleted, "entity_type": entity_type if entity_type else None, "all_entities": all_entities}
 
 
 @router.post("/memory/facts/decay")

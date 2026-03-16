@@ -1208,7 +1208,7 @@ async def propose_capability_request(
 @router.get("/jarvis/requirements/pending")
 async def get_pending_requests(
     limit: int = Query(10, ge=1, le=100),
-    priority: Optional[str] = Query(None, regex="^(low|medium|high)$"),
+    priority: Optional[str] = Query(None, pattern="^(low|medium|high)$"),
     request: Request = None
 ):
     """Phase 4: Get pending capability requests for human review."""
