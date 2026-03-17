@@ -33,6 +33,7 @@ from . import llm
 from . import agent
 from . import ssh_client
 from . import n8n_workflow_manager
+from .agent_defaults import resolve_agent_model
 from .emotion_tracker import emotion_tracker
 
 # Frequently used modules - imported at top-level to avoid repeated lazy imports
@@ -736,7 +737,11 @@ async def rate_limit_middleware(request: Request, call_next):
     """Apply rate limiting and add rate limit headers to responses."""
     # Skip guards for health/metrics and other public endpoints.
     path = request.url.path
-    if path.startswith("/health") or path.startswith("/metrics") or path in ["/rate_limits"]:
+    if (
+        path.startswith("/health")
+        or path.startswith("/metrics")
+        or path in ["/rate_limits", "/livez", "/readyz"]
+    ):
         return await call_next(request)
 
     # Resource guard (load shedding): fail fast under memory/disk pressure.
@@ -793,6 +798,8 @@ def startup_event():
     from .embed import get_model
     from .prompt_assembler import get_prompt_version
     import tracemalloc
+
+    global_state.mark_startup_started()
 
     # Enable tracemalloc for memory profiling endpoint
     if not tracemalloc.is_tracing():
@@ -893,28 +900,73 @@ def startup_event():
     except Exception as e:
         logger.warning(f"Failed to start memory lifecycle service: {e}")
 
-    # Send minimal restart notification to Telegram
+    # Send restart notification to Telegram (deduplicated by update note)
     try:
-        # Check for latest update note
+        import json
+        import os
+        import time
+
+        update_file = "/brain/system/data/LATEST_UPDATE.txt"
+        state_file = "/brain/system/data/.startup_alert_state.json"
+
+        mode = os.getenv("STARTUP_ALERT_MODE", "on_change").strip().lower()
+        # Supported modes:
+        # - off: never send startup alerts
+        # - on_change (default): send only when update note changed
+        # - always: send on every restart
+
         update_note = ""
-        try:
-            update_file = "/brain/system/data/LATEST_UPDATE.txt"
-            import os
-            if os.path.exists(update_file):
-                with open(update_file, "r") as f:
-                    update_note = f.read().strip()
-        except Exception:
-            pass
+        if os.path.exists(update_file):
+            with open(update_file, "r") as f:
+                update_note = f.read().strip()
 
-        # Build message
-        msg = "👋 Bin zurück, Micha."
-        if update_note:
-            msg += f"\n\n→ {update_note}"
+        last_note = ""
+        state = {}
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, "r") as f:
+                    state = json.load(f)
+                    last_note = (state.get("last_note") or "").strip()
+            except Exception:
+                state = {}
 
-        send_alert(msg, level="info")
-        logger.info("Startup alert sent")
+        should_send = False
+        if mode == "off":
+            should_send = False
+        elif mode == "always":
+            should_send = True
+        else:
+            # Default: only notify when update note has changed and is non-empty.
+            should_send = bool(update_note) and update_note != last_note
+
+        if should_send:
+            msg = "👋 Bin zurück, Micha."
+            if update_note:
+                msg += f"\n\n→ {update_note}"
+
+            sent_ok = send_alert(msg, level="info")
+            state["last_note"] = update_note
+            state["last_attempt_at"] = int(time.time())
+            state["last_attempt_sent"] = bool(sent_ok)
+            if sent_ok:
+                state["last_sent_at"] = state["last_attempt_at"]
+
+            try:
+                with open(state_file, "w") as f:
+                    json.dump(state, f)
+            except Exception as write_err:
+                logger.warning(f"Could not persist startup alert state: {write_err}")
+
+            if sent_ok:
+                logger.info("Startup alert sent")
+            else:
+                logger.warning("Startup alert attempted but not sent (dedupe state persisted)")
+        else:
+            logger.info("Startup alert skipped (no relevant update change)")
     except Exception as e:
-        logger.warning(f"Failed to send startup alert: {e}")
+        logger.warning(f"Failed to process startup alert: {e}")
+
+    global_state.mark_startup_ready()
 
 
 # Health endpoints moved to routers/health_router.py
@@ -2670,6 +2722,40 @@ def agent_chat(req: AgentRequest, request: Request):
     request_namespace = req.get_namespace()
     metrics.REQUEST_COUNT.labels(role=req.role or "default", namespace=request_namespace).inc()
 
+    raw_namespace = (req.namespace or "").strip()
+    if req.scope is not None:
+        input_mode = "scope"
+    elif raw_namespace:
+        input_mode = "namespace"
+    else:
+        input_mode = "default"
+    metrics.SCOPE_REQUEST_INPUT_TOTAL.labels(
+        role=req.role or "default",
+        input_mode=input_mode,
+        namespace=raw_namespace or "<none>",
+        scope_org=request_scope.org,
+        scope_visibility=request_scope.visibility,
+    ).inc()
+
+    # Shadow-Read: verify namespace ↔ scope round-trip consistency
+    shadow_namespace = request_scope.to_legacy_namespace()
+    shadow_status = "match" if shadow_namespace == request_namespace else "mismatch"
+    metrics.SCOPE_SHADOW_RESOLUTION_TOTAL.labels(
+        role=req.role or "default",
+        namespace=request_namespace,
+        scope_org=request_scope.org,
+        scope_visibility=request_scope.visibility,
+        status=shadow_status,
+    ).inc()
+    if shadow_status == "mismatch":
+        log_with_context(
+            logger, "warning", "Scope shadow-read mismatch",
+            namespace=request_namespace,
+            scope_org=request_scope.org,
+            scope_visibility=request_scope.visibility,
+            shadow_namespace=shadow_namespace,
+        )
+
     try:
         # Guardrails
         validation_error = _validate_agent_request(req)
@@ -2713,7 +2799,7 @@ def agent_chat(req: AgentRequest, request: Request):
                         conversation_history=conversation_history,
                         namespace=request_namespace,
                         scope=request_scope,
-                        model=req.model or "claude-sonnet-4-20250514",
+                        model=resolve_agent_model(req.model),
                         max_tokens=req.max_tokens,
                         role=req.role,
                         auto_detect_role=req.auto_detect_role,
@@ -2766,6 +2852,7 @@ def agent_chat(req: AgentRequest, request: Request):
                     q.put(("done", {
                         "session_id": session_id,
                         "model": result.get("model"),
+                        "provider": result.get("provider"),
                         "usage": result.get("usage"),
                         "rounds": result.get("rounds"),
                         "tool_calls": result.get("tool_calls", []),
@@ -2823,7 +2910,7 @@ def agent_chat(req: AgentRequest, request: Request):
             conversation_history=conversation_history,
             namespace=request_namespace,
             scope=request_scope,
-            model=req.model or "claude-sonnet-4-20250514",
+            model=resolve_agent_model(req.model),
             max_tokens=req.max_tokens,
             role=req.role,
             auto_detect_role=req.auto_detect_role,
@@ -2891,6 +2978,7 @@ def agent_chat(req: AgentRequest, request: Request):
             "qdrant_registered": result.get("qdrant_registered"),
             "qdrant_results": result.get("qdrant_results", {}),
             "model": result["model"],
+            "provider": result.get("provider"),
             "role": result.get("role", "assistant"),
             "persona_id": result.get("persona_id"),
             "usage": result["usage"],
