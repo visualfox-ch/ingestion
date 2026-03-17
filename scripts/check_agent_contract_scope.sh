@@ -11,14 +11,14 @@ namespace_resp="$(curl -sS --max-time 60 "$ENDPOINT" \
   -H 'Content-Type: application/json' \
   -d '{"query":"contract smoke namespace","namespace":"work_projektil","max_tokens":64,"stream":false,"source":"api"}')"
 
-python3 - "$namespace_resp" <<'PY' || fail "namespace payload rejected"
+python3 - "$namespace_resp" <<'PY' || fail "legacy namespace payload rejected"
 import json
 import sys
 payload = json.loads(sys.argv[1])
 if not payload.get("answer") or payload.get("error") is not None:
     raise SystemExit(1)
 PY
-pass "namespace payload accepted"
+pass "legacy namespace payload accepted"
 
 scope_resp="$(curl -sS --max-time 60 "$ENDPOINT" \
   -H 'Content-Type: application/json' \

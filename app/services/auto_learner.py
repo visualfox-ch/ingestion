@@ -20,6 +20,7 @@ from pathlib import Path
 from threading import Lock
 
 from ..observability import get_logger, log_with_context
+from ..models import ScopeRef
 
 logger = get_logger("jarvis.auto_learner")
 
@@ -28,6 +29,13 @@ BRAIN_ROOT = Path(os.environ.get("BRAIN_ROOT", "/brain"))
 LEARNING_DB_PATH = BRAIN_ROOT / "system" / "state" / "jarvis_learning.db"
 
 _db_lock = Lock()
+
+
+def _scope_from_namespace(namespace: Optional[str]) -> tuple[str, str]:
+    """Map legacy namespace to scope org/visibility for dual-write."""
+    ns = namespace or "work_projektil"
+    scope = ScopeRef.from_legacy_namespace(ns)
+    return scope.org, scope.visibility
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -81,6 +89,21 @@ def _get_conn() -> sqlite3.Connection:
 
         CREATE INDEX IF NOT EXISTS idx_learned_facts_type ON learned_facts(fact_type);
     """)
+
+    # Expand learned_facts schema for namespace->scope dual-write compatibility.
+    cols = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(learned_facts)").fetchall()
+    }
+    if "namespace" not in cols:
+        conn.execute("ALTER TABLE learned_facts ADD COLUMN namespace TEXT")
+    if "scope_org" not in cols:
+        conn.execute("ALTER TABLE learned_facts ADD COLUMN scope_org TEXT")
+    if "scope_visibility" not in cols:
+        conn.execute("ALTER TABLE learned_facts ADD COLUMN scope_visibility TEXT")
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_learned_facts_namespace ON learned_facts(namespace)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_learned_facts_scope ON learned_facts(scope_org, scope_visibility)")
     conn.commit()
     return conn
 
@@ -183,7 +206,8 @@ def store_learned_fact(
     fact_key: str,
     fact_value: str,
     confidence: float = 0.5,
-    source: str = "auto_learner"
+    source: str = "auto_learner",
+    namespace: Optional[str] = None,
 ) -> bool:
     """
     Store a learned fact. Updates if exists with higher confidence.
@@ -194,6 +218,8 @@ def store_learned_fact(
         try:
             conn = _get_conn()
             now = datetime.utcnow().isoformat()
+            resolved_namespace = namespace or "work_projektil"
+            scope_org, scope_visibility = _scope_from_namespace(resolved_namespace)
 
             # Check if exists
             cursor = conn.execute(
@@ -207,15 +233,16 @@ def store_learned_fact(
                 if confidence > existing["confidence"]:
                     conn.execute("""
                         UPDATE learned_facts
-                        SET fact_value = ?, confidence = ?, updated_at = ?
+                        SET fact_value = ?, confidence = ?, updated_at = ?,
+                            namespace = ?, scope_org = ?, scope_visibility = ?
                         WHERE id = ?
-                    """, (fact_value, confidence, now, existing["id"]))
+                    """, (fact_value, confidence, now, resolved_namespace, scope_org, scope_visibility, existing["id"]))
             else:
                 conn.execute("""
                     INSERT INTO learned_facts
-                    (fact_type, fact_key, fact_value, confidence, source, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (fact_type, fact_key, fact_value, confidence, source, now, now))
+                    (fact_type, fact_key, fact_value, confidence, source, namespace, scope_org, scope_visibility, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (fact_type, fact_key, fact_value, confidence, source, resolved_namespace, scope_org, scope_visibility, now, now))
 
             conn.commit()
             conn.close()
@@ -288,7 +315,11 @@ def extract_learning_from_session(
     tool_calls: List[Dict[str, Any]],
     final_answer: str,
     success: bool,
-    user_feedback: str = None
+    user_feedback: str = None,
+    user_id: str = None,
+    session_id: str = None,
+    namespace: str = None,
+    source: str = None,
 ) -> Dict[str, Any]:
     """
     Extract learnings from a completed session.
@@ -311,7 +342,8 @@ def extract_learning_from_session(
             input_params=tc.get("input", {}),
             result_summary=tc.get("result_summary", ""),
             success=tool_success,
-            query_intent=query[:100]
+            query_intent=query[:100],
+            user_id=user_id,
         )
         learnings["tool_usage_logged"] += 1
 
@@ -368,7 +400,8 @@ def extract_learning_from_session(
                 fact_key=f"combo_{hash(tools_combo) % 100000}",
                 fact_value=f"Tools [{tools_combo}] work well together for: {query[:50]}",
                 confidence=0.6,
-                source="session_success"
+                source="session_success",
+                namespace=namespace,
             )
             learnings["facts_stored"] += 1
 
@@ -388,7 +421,14 @@ def extract_learning_from_session(
                 options_considered=tools_selected,
                 reasoning="Auto-recorded from agent execution",
                 confidence=0.7 if success else 0.4,
-                context={"query_length": len(query), "tool_count": len(tool_calls)},
+                context={
+                    "query_length": len(query),
+                    "tool_count": len(tool_calls),
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "namespace": namespace,
+                    "source": source or "agent",
+                },
                 query=query
             )
 

@@ -67,6 +67,28 @@ AGENT_ROUNDS = Histogram(
     buckets=(1, 3, 5, 10, 15)
 )
 
+# Scope shadow-read consistency metric
+SCOPE_SHADOW_RESOLUTION_TOTAL = Counter(
+    'jarvis_scope_shadow_resolution_total',
+    'Scope-to-legacy namespace shadow resolution consistency',
+    ['role', 'namespace', 'scope_org', 'scope_visibility', 'status']
+)
+
+# Tracks whether callers send explicit scope, legacy namespace, or rely on defaults.
+SCOPE_REQUEST_INPUT_TOTAL = Counter(
+    'jarvis_scope_request_input_total',
+    'How /agent requests specify scope context',
+    ['role', 'input_mode', 'namespace', 'scope_org', 'scope_visibility']
+)
+
+# Tracks whether /scan/folder callers send explicit scope, legacy namespace,
+# or rely on defaults during the namespace -> scope migration.
+SCAN_SCOPE_REQUEST_INPUT_TOTAL = Counter(
+    'jarvis_scan_scope_request_input_total',
+    'How /scan/folder requests specify scope context',
+    ['input_mode', 'namespace', 'scope_org', 'scope_visibility', 'source_type']
+)
+
 # =============================================================================
 # AUTONOMY METRICS (Phase B: minimal, measurable)
 # =============================================================================

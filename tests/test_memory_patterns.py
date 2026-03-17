@@ -5,7 +5,7 @@ Tests memory pattern edge cases including:
 - Conflict detection accuracy
 - TTL enforcement
 - Source attribution correctness
-- Namespace isolation
+- Scope isolation (with legacy namespace identifiers)
 """
 import pytest
 from datetime import datetime, timedelta
@@ -156,7 +156,7 @@ class TestConflictDetection:
         assert is_conflict
 
     def test_different_namespace_not_conflict(self, sample_facts):
-        """Same key in different namespaces is NOT a conflict."""
+        """Same key in different scopes is NOT a conflict."""
         fact1 = sample_facts[0]  # personal namespace
         fact3 = sample_facts[2]  # work namespace
 
@@ -164,7 +164,7 @@ class TestConflictDetection:
         same_namespace = fact1["namespace"] == fact3["namespace"]
 
         assert same_key
-        assert not same_namespace  # Different namespace = no conflict
+        assert not same_namespace  # Different scope = no conflict
 
     def test_conflict_resolution_by_confidence(self, sample_facts):
         """Higher confidence fact should win in conflict resolution."""
@@ -293,11 +293,11 @@ class TestSourceAttribution:
 
 
 # ============================================================================
-# Namespace Isolation Tests
+# Scope Isolation Tests (legacy namespace identifiers)
 # ============================================================================
 
 class TestNamespaceIsolation:
-    """Test namespace isolation for facts."""
+    """Test scope isolation for facts via legacy namespace fields."""
 
     def test_facts_in_correct_namespace(self, sample_facts):
         """Facts should be retrievable only from their namespace."""
@@ -308,7 +308,7 @@ class TestNamespaceIsolation:
         assert len(work_facts) == 1
 
     def test_namespace_scoped_retrieval(self, sample_facts):
-        """Retrieving by namespace should not leak across namespaces."""
+        """Retrieving by scope should not leak across scopes."""
         def retrieve_by_namespace(facts, namespace):
             return [f for f in facts if f["namespace"] == namespace]
 
@@ -321,7 +321,7 @@ class TestNamespaceIsolation:
         assert personal_ids.isdisjoint(work_ids)
 
     def test_namespace_specific_conflicts(self, sample_facts):
-        """Conflicts should only be detected within same namespace."""
+        """Conflicts should only be detected within the same scope."""
         def find_conflicts(facts, namespace):
             ns_facts = [f for f in facts if f["namespace"] == namespace]
             keys = {}

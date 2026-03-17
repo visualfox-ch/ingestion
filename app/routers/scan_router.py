@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field
 
 from ..observability import get_logger, log_with_context
 from ..auth import auth_dependency
-from .. import config
+from ..models import ScopeRef
+from .. import config, metrics
 
 router = APIRouter(prefix="/scan", tags=["scan"])
 logger = get_logger("jarvis.scan")
@@ -42,7 +43,8 @@ DEFAULT_PROCESSED = Path("/brain/documents/processed")
 class FolderScanRequest(BaseModel):
     """Request to scan a folder for documents."""
     folder: str = Field(default="/brain/documents/inbox", description="Folder to scan")
-    namespace: str = Field(default="private", description="Namespace for ingested documents")
+    namespace: Optional[str] = Field(default=None, description="Namespace for ingested documents (deprecated, use scope)")
+    scope: Optional[ScopeRef] = Field(default=None, description="Scope for ingested documents")
     source_type: str = Field(default="document", description="Source type for documents")
     recursive: bool = Field(default=False, description="Scan subfolders")
     patterns: List[str] = Field(
@@ -55,6 +57,25 @@ class FolderScanRequest(BaseModel):
         description="Folder to move processed files"
     )
     max_files: int = Field(default=50, description="Max files to process per scan")
+
+    def get_scope(self) -> ScopeRef:
+        """Return scope, falling back to legacy namespace or defaults."""
+        if self.scope is not None:
+            return self.scope
+
+        if self.namespace is not None and str(self.namespace).strip():
+            return ScopeRef.from_legacy_namespace(self.namespace)
+
+        # Default scope for scan operations
+        return ScopeRef(
+            org="personal",
+            visibility="private",
+            owner="scan_service"
+        )
+
+    def get_namespace(self) -> str:
+        """Return the effective legacy namespace for backward-compatible code paths."""
+        return self.get_scope().to_legacy_namespace()
 
 
 class FolderScanResult(BaseModel):
@@ -182,9 +203,28 @@ async def scan_folder(
     - Deduplicates by file hash
     - Optionally moves processed files to archive
     - Returns detailed processing results
+    - Accepts both legacy `namespace` and new `scope` parameters
     """
     import time
     start_time = time.time()
+
+    # Resolve scope and namespace (dual-mode support)
+    request_scope = request.get_scope()
+    effective_namespace = request.get_namespace()
+    raw_namespace = (request.namespace or "").strip()
+    if request.scope is not None:
+        input_mode = "scope"
+    elif raw_namespace:
+        input_mode = "namespace"
+    else:
+        input_mode = "default"
+    metrics.SCAN_SCOPE_REQUEST_INPUT_TOTAL.labels(
+        input_mode=input_mode,
+        namespace=raw_namespace or "<none>",
+        scope_org=request_scope.org,
+        scope_visibility=request_scope.visibility,
+        source_type=request.source_type or "document",
+    ).inc()
 
     folder_path = Path(request.folder)
     archive_path = Path(request.archive_folder) if request.move_processed else None
@@ -277,7 +317,7 @@ async def scan_folder(
                 filename=filepath.name,
                 file_path=str(filepath),
                 source_type=request.source_type,
-                namespace=request.namespace,
+                namespace=effective_namespace,
                 file_hash=file_hash,
                 file_size_bytes=filepath.stat().st_size,
                 metadata={
@@ -301,7 +341,7 @@ async def scan_folder(
             # Build metadata dict for batch upsert
             meta = {
                 "source_path": str(filepath),
-                "namespace": request.namespace,
+                "namespace": effective_namespace,
                 "source_type": request.source_type,
                 "doc_type": doc_type,
                 "filename": filepath.name,
@@ -311,7 +351,7 @@ async def scan_folder(
 
             # Upsert all chunks at once
             upsert_result = qdrant_upsert.upsert_chunks(
-                collection=f"jarvis_{request.namespace}",
+                collection=f"jarvis_{effective_namespace}",
                 chunks=chunks,
                 embeddings=embeddings,
                 meta=meta,
@@ -355,7 +395,7 @@ async def scan_folder(
 
             log_with_context(logger, "info", "Document ingested",
                            file=filepath.name, chunks=len(chunks),
-                           namespace=request.namespace)
+                           namespace=effective_namespace)
 
         except Exception as e:
             log_with_context(logger, "error", "Failed to process file",

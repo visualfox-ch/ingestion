@@ -63,7 +63,7 @@ def test_agent_accepts_legacy_namespace(monkeypatch):
     resp = client.post(
         "/agent",
         json={
-            "query": "contract test namespace",
+            "query": "contract test legacy namespace",
             "namespace": "work_projektil",
             "stream": False,
             "source": "api",
@@ -84,7 +84,7 @@ def test_agent_accepts_scope_payload(monkeypatch):
     resp = client.post(
         "/agent",
         json={
-            "query": "contract test scope",
+            "query": "contract test explicit scope",
             "scope": {"org": "personal", "visibility": "private"},
             "stream": False,
             "source": "api",
@@ -101,6 +101,7 @@ def test_agent_accepts_scope_payload(monkeypatch):
 
 
 def test_agent_accepts_missing_namespace_with_api_default_scope(monkeypatch):
+    # Legacy namespace remains the compatibility output shape of scope defaults.
     call_log = []
     _patch_agent_dependencies(monkeypatch, call_log)
     monkeypatch.setattr(
@@ -127,6 +128,7 @@ def test_agent_accepts_missing_namespace_with_api_default_scope(monkeypatch):
 
 
 def test_agent_accepts_missing_namespace_with_telegram_default_scope(monkeypatch):
+    # Legacy namespace remains the compatibility output shape of scope defaults.
     call_log = []
     _patch_agent_dependencies(monkeypatch, call_log)
     monkeypatch.setattr(
@@ -197,6 +199,7 @@ def test_agent_rejects_missing_namespace_and_scope():
 
 
 def test_n8n_drive_sync_uses_api_default_namespace_when_missing(monkeypatch):
+    # Endpoint still passes legacy namespace identifiers internally.
     monkeypatch.setattr(
         "app.main.get_default_scope",
         lambda source: {"org": "projektil", "visibility": "internal", "owner": "michael_bohl"},
@@ -220,6 +223,7 @@ def test_n8n_drive_sync_uses_api_default_namespace_when_missing(monkeypatch):
 
 
 def test_n8n_gmail_sync_uses_default_namespace_for_storage(monkeypatch, tmp_path):
+    # Storage path currently uses legacy namespace folder names.
     monkeypatch.setattr(
         "app.main.get_default_scope",
         lambda source: {"org": "projektil", "visibility": "internal", "owner": "michael_bohl"},
@@ -255,6 +259,7 @@ def test_n8n_gmail_sync_uses_default_namespace_for_storage(monkeypatch, tmp_path
 
 
 def test_consolidate_run_uses_api_default_namespace_when_missing(monkeypatch):
+    # Consolidation response currently exposes legacy namespace naming.
     monkeypatch.setattr(
         "app.main.get_default_scope",
         lambda source: {"org": "projektil", "visibility": "internal", "owner": "michael_bohl"},
@@ -276,6 +281,7 @@ def test_consolidate_run_uses_api_default_namespace_when_missing(monkeypatch):
 
 
 def test_ingest_drive_uses_api_default_namespace_when_missing(monkeypatch):
+    # Qdrant collections are still keyed by legacy namespace identifiers.
     monkeypatch.setattr(
         "app.main.get_default_scope",
         lambda source: {"org": "projektil", "visibility": "internal", "owner": "michael_bohl"},
@@ -308,6 +314,7 @@ def test_ingest_drive_uses_api_default_namespace_when_missing(monkeypatch):
 
 
 def test_drive_documents_uses_api_default_namespace_when_missing(monkeypatch):
+    # Document listing still resolves to legacy namespace collection names.
     monkeypatch.setattr(
         "app.main.get_default_scope",
         lambda source: {"org": "projektil", "visibility": "internal", "owner": "michael_bohl"},
@@ -352,6 +359,7 @@ def test_drive_documents_uses_api_default_namespace_when_missing(monkeypatch):
 
 
 def test_drive_search_uses_api_default_namespace_when_missing(monkeypatch):
+    # Search still resolves to legacy namespace collection names.
     monkeypatch.setattr(
         "app.main.get_default_scope",
         lambda source: {"org": "projektil", "visibility": "internal", "owner": "michael_bohl"},

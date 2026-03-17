@@ -38,6 +38,8 @@ class SessionSnapshot:
     user_id: str
     session_id: str
     namespace: str = "work_projektil"
+    scope_org: str = "projektil"
+    scope_visibility: str = "internal"
 
     # Timestamp
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -140,6 +142,17 @@ class MemoryStore:
         self.redis = redis_client
         self.session_ttl = timedelta(days=30)
         self.user_ttl = timedelta(days=90)
+
+    @staticmethod
+    def _scope_from_namespace(namespace: str) -> tuple[str, str]:
+        """Best-effort legacy namespace to scope mapping for dual-write state."""
+        mapping = {
+            "private": ("personal", "private"),
+            "work_projektil": ("projektil", "internal"),
+            "work_visualfox": ("visualfox", "internal"),
+            "shared": ("personal", "shared"),
+        }
+        return mapping.get(namespace or "work_projektil", ("projektil", "internal"))
     
     @redis_operation(fallback_value=False)
     def save_session_state(
@@ -149,7 +162,9 @@ class MemoryStore:
         namespace: str,
         state: Dict[str, Any],
         context: Dict[str, Any],
-        priming: Dict[str, Any]
+        priming: Dict[str, Any],
+        scope_org: Optional[str] = None,
+        scope_visibility: Optional[str] = None,
     ) -> bool:
         """
         Save session state to Redis.
@@ -166,10 +181,13 @@ class MemoryStore:
             True if successful, False otherwise
         """
         key = f"session:{session_id}:state"
+        resolved_scope_org, resolved_scope_visibility = self._scope_from_namespace(namespace)
         data = {
             "session_id": session_id,
             "user_id": user_id,
             "namespace": namespace,
+            "scope_org": scope_org or resolved_scope_org,
+            "scope_visibility": scope_visibility or resolved_scope_visibility,
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
             "state": state,

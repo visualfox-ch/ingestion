@@ -14,7 +14,8 @@ from typing import Dict, Any, List, Optional
 import json
 import hashlib
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
+from ..models import ScopeRef
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,16 @@ DECISION_CATEGORIES = [
 ]
 
 
+def _normalize_user_id(value: Any) -> str:
+    """Return a DB-safe numeric user_id string for mixed-schema environments."""
+    if value is None:
+        return "0"
+    try:
+        return str(int(str(value).strip()))
+    except Exception:
+        return "0"
+
+
 class DecisionTracker:
     """
     Tracks and analyzes decisions made during query processing.
@@ -39,12 +50,47 @@ class DecisionTracker:
     """
 
     def __init__(self):
+        self._decision_log_columns: Optional[set] = None
         self._ensure_tables()
+
+    def _get_decision_log_columns(self) -> set:
+        """Get current decision_log columns from PostgreSQL (cached)."""
+        if self._decision_log_columns is not None:
+            return self._decision_log_columns
+
+        cols = set()
+        try:
+            with get_dict_cursor() as cur:
+                # Most reliable path: derive column names from the live table cursor.
+                cur.execute("SELECT * FROM decision_log LIMIT 0")
+                if cur.description:
+                    cols = {d[0] for d in cur.description}
+
+            if cols:
+                self._decision_log_columns = cols
+                return cols
+
+            with get_dict_cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'decision_log'
+                    """
+                )
+                cols = {row["column_name"] for row in cur.fetchall()}
+        except Exception as e:
+            logger.debug(f"Could not introspect decision_log columns: {e}")
+
+        # Do not cache empty results; this allows retries if startup timing/race caused no data.
+        if cols:
+            self._decision_log_columns = cols
+        return cols
 
     def _ensure_tables(self):
         """Ensure decision tracking tables exist."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS decision_log (
                         id SERIAL PRIMARY KEY,
@@ -133,30 +179,69 @@ class DecisionTracker:
             Dict with decision_id for later outcome tracking
         """
         try:
+            context = context or {}
             decision_id = hashlib.md5(
                 f"{datetime.now().isoformat()}{decision_point}{decision_made}".encode()
             ).hexdigest()
 
             query_hash = hashlib.md5(query.encode()).hexdigest() if query else None
 
-            with get_cursor() as cur:
-                cur.execute("""
-                    INSERT INTO decision_log
-                    (decision_id, query_hash, category, decision_point, options_considered,
-                     decision_made, reasoning, confidence, context_snapshot)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            # Compatibility payload: supports both legacy and extended decision_log schemas.
+            payload = {
+                "decision_id": decision_id,
+                "query_hash": query_hash,
+                "category": category,
+                "decision_point": decision_point,
+                "options_considered": json.dumps(options_considered or []),
+                "decision_made": decision_made,
+                "decision_text": f"{decision_point}: {decision_made}"[:500],
+                "decision_category": category,
+                "title": decision_point[:255],
+                "context": reasoning or json.dumps(context),
+                "reasoning": reasoning,
+                "rationale": reasoning,
+                "confidence": confidence,
+                "context_snapshot": json.dumps(context),
+                # Extended schema fields commonly enforced as NOT NULL in production.
+                "user_id": _normalize_user_id(context.get("user_id")),
+                "session_id": context.get("session_id") or decision_id[:8],
+                "namespace": context.get("namespace") or "general",
+                "scope_org": ScopeRef.from_legacy_namespace(context.get("namespace") or "general").org,
+                "scope_visibility": ScopeRef.from_legacy_namespace(context.get("namespace") or "general").visibility,
+                "status": context.get("status") or "active",
+                "query": query,
+                "source": context.get("source") or "agent",
+                "owner": context.get("owner") or "system",
+                "tags": [],
+                "outcome_known": False,
+                "feedback_score": None,
+                "lessons_applied": [],
+            }
+
+            available_cols = self._get_decision_log_columns()
+            if available_cols:
+                insert_cols = [k for k in payload.keys() if k in available_cols]
+            else:
+                # Fallback to legacy columns if schema introspection fails.
+                insert_cols = [
+                    "decision_id", "query_hash", "category", "decision_point",
+                    "options_considered", "decision_made", "reasoning",
+                    "confidence", "context_snapshot"
+                ]
+
+            placeholders = ", ".join(["%s"] * len(insert_cols))
+            col_sql = ", ".join(insert_cols)
+            values = [payload[c] for c in insert_cols]
+
+            with get_dict_cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO decision_log ({col_sql})
+                    VALUES ({placeholders})
                     RETURNING id
-                """, (
-                    decision_id,
-                    query_hash,
-                    category,
-                    decision_point,
-                    json.dumps(options_considered or []),
-                    decision_made,
-                    reasoning,
-                    confidence,
-                    json.dumps(context or {})
-                ))
+                    """,
+                    values,
+                )
 
                 row = cur.fetchone()
                 return {
@@ -190,7 +275,7 @@ class DecisionTracker:
             Dict with update confirmation
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Update decision record
                 cur.execute("""
                     UPDATE decision_log
@@ -314,7 +399,7 @@ class DecisionTracker:
     ) -> Dict[str, Any]:
         """Get recent decision history."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 if category:
                     cur.execute("""
                         SELECT decision_id, category, decision_point, decision_made,
@@ -366,7 +451,7 @@ class DecisionTracker:
     ) -> Dict[str, Any]:
         """Get decision statistics and patterns."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Overall stats
                 if category:
                     cur.execute("""
@@ -462,7 +547,7 @@ class DecisionTracker:
         try:
             pattern_key = self._create_pattern_key(category, context or {})
 
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Look for exact pattern match
                 cur.execute("""
                     SELECT preferred_decision, avg_outcome_score, total_count

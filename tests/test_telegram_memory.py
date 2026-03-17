@@ -752,22 +752,22 @@ def is_sensitive_content(text: str) -> bool:
 
 
 class TestNamespaceIsolation:
-    """Test namespace isolation per user (T-107)."""
+    """Test scope isolation per user via legacy namespace fields (T-107)."""
 
     def test_personal_namespace_prefixed(self):
-        """Test personal namespace gets telegram_ prefix."""
+        """Test personal scope key gets telegram_ prefix."""
         namespace = get_telegram_namespace("user123", "personal")
 
         assert namespace == "telegram_user123"
 
     def test_other_namespace_prefixed(self):
-        """Test other namespaces get telegram_ prefix."""
+        """Test non-personal scope keys get telegram_ prefix."""
         namespace = get_telegram_namespace("user123", "work")
 
         assert namespace == "telegram_work"
 
     def test_different_users_isolated(self):
-        """Test different users have different namespaces."""
+        """Test different users resolve to different isolated scope keys."""
         ns1 = get_telegram_namespace("alice", "personal")
         ns2 = get_telegram_namespace("bob", "personal")
 
@@ -777,7 +777,7 @@ class TestNamespaceIsolation:
 
 
 def get_telegram_namespace(user_id: str, namespace: str) -> str:
-    """Get isolated namespace for telegram learning."""
+    """Get isolated legacy namespace key for telegram learning."""
     if namespace == "personal":
         return f"telegram_{user_id}"
     return f"telegram_{namespace}"

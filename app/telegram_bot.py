@@ -124,6 +124,12 @@ def call_jarvis_agent(
 ) -> Dict[str, Any]:
     """Call Jarvis agent API"""
     try:
+        mapping = {
+            "private": ("personal", "private"),
+            "work_projektil": ("projektil", "internal"),
+            "work_visualfox": ("visualfox", "internal"),
+            "shared": ("personal", "shared"),
+        }
         payload = {
             "query": query,
             "session_id": session_id,
@@ -132,7 +138,8 @@ def call_jarvis_agent(
             "source": source,
         }
         if namespace is not None and str(namespace).strip():
-            payload["namespace"] = namespace
+            org, visibility = mapping.get(str(namespace).strip(), ("projektil", "internal"))
+            payload["scope"] = {"org": org, "visibility": visibility}
         if user_id:
             payload["user_id"] = str(user_id)  # AgentRequest expects string
 
