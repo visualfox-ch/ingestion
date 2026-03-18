@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from .observability import get_logger, log_with_context
 from .db_safety import safe_list_query, safe_write_query, safe_aggregate_query
 from .connection_pool_metrics import get_pool_metrics
+from .models import ScopeRef
 from . import postgres_state
 
 logger = get_logger("jarvis.knowledge")
@@ -4285,17 +4286,19 @@ def create_upload_entry(
     Returns the created entry with its UUID.
     """
     try:
+        scope = ScopeRef.from_legacy_namespace(namespace)
         with get_conn() as conn:
             cur = conn.cursor()
             cur.execute("""
                 INSERT INTO upload_queue
-                (filename, file_path, source_type, namespace, channel_hint,
-                 file_size_bytes, file_hash, priority, uploaded_by, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (filename, file_path, source_type, namespace, scope_org, scope_visibility, scope_domain,
+                 channel_hint, file_size_bytes, file_hash, priority, uploaded_by, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
             """, (
-                filename, file_path, source_type, namespace, channel_hint,
-                file_size_bytes, file_hash, priority, uploaded_by,
+                filename, file_path, source_type, namespace,
+                scope.org, scope.visibility, scope.domain,
+                channel_hint, file_size_bytes, file_hash, priority, uploaded_by,
                 json.dumps(metadata or {})
             ))
             row = cur.fetchone()
