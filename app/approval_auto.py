@@ -279,7 +279,8 @@ class AutoApprovalEngine:
                 "reason": reason,
             }
 
-            safe_write_query(query, params, context="record_auto_approval_decision")
+            with safe_write_query("auto_approval_decisions") as cur:
+                cur.execute(query, params)
 
             log_with_context(
                 logger, "info",
@@ -344,7 +345,8 @@ class AutoApprovalEngine:
                 "reported_by": reported_by,
             }
 
-            safe_write_query(query, params, context="report_false_positive")
+            with safe_write_query("confidence_false_positives") as cur:
+                cur.execute(query, params)
 
             log_with_context(
                 logger, "warning",
@@ -382,11 +384,9 @@ class AutoApprovalEngine:
             ORDER BY DATE(aad.created_at) DESC;
             """
 
-            results = safe_list_query(
-                query,
-                {"days": days_back},
-                context="get_false_positive_rate"
-            )
+            with safe_list_query("auto_approval_decisions") as cur:
+                cur.execute(query, {"days": days_back})
+                results = cur.fetchall()
 
             return {
                 "days_analyzed": days_back,

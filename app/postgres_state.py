@@ -795,7 +795,7 @@ def init_state_schema():
 
 def get_connector_state(connector_id: str) -> Optional[Dict]:
     """Get connector state from Postgres"""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT * FROM connector_state WHERE connector_id = %s
         """, (connector_id,))
@@ -885,7 +885,7 @@ def update_connector_sync(
 
 def list_connectors() -> List[Dict]:
     """List all connectors with health status"""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT
                 connector_id, connector_type, namespace, enabled,
@@ -959,7 +959,7 @@ def record_ingest(
 
 def is_already_ingested(source_path: str, ingest_type: str) -> bool:
     """Check if source was successfully ingested"""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT status FROM ingest_event
             WHERE source_path = %s AND ingest_type = %s
@@ -976,7 +976,7 @@ def get_ingest_history(
     limit: int = 100
 ) -> List[Dict]:
     """Query ingest history with filters"""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         conditions = ["1=1"]
         params = []
 
@@ -1123,7 +1123,7 @@ def get_conversation_history(session_id: str, limit: int = 20) -> List[Dict]:
 
 def get_telegram_user_state(user_id: int) -> Optional[Dict]:
     """Get telegram user's session state"""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT session_id, namespace, role FROM telegram_user WHERE user_id = %s
         """, (user_id,))
@@ -1185,7 +1185,7 @@ def set_telegram_user_state(
 
 def get_all_telegram_users() -> List[Dict]:
     """Get all registered telegram users"""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("SELECT user_id, namespace FROM telegram_user")
         return [dict(row) for row in cur.fetchall()]
 
@@ -1194,7 +1194,7 @@ def get_all_telegram_users() -> List[Dict]:
 
 def get_working_state(state_id: str = "default") -> Optional[Dict]:
     """Get current working state for session continuity"""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("SELECT * FROM working_state WHERE id = %s", (state_id,))
         row = cur.fetchone()
         return dict(row) if row else None
@@ -1382,7 +1382,7 @@ def get_active_buffer(state_id: str = "default") -> List[Dict]:
     Get the current active context buffer.
     Returns threads ordered by priority (highest first), then last_touched.
     """
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT * FROM active_context_buffer
             WHERE state_id = %s AND status = 'active'
@@ -1393,7 +1393,7 @@ def get_active_buffer(state_id: str = "default") -> List[Dict]:
 
 def get_buffer_thread(thread_id: str) -> Optional[Dict]:
     """Get a specific thread by ID"""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("SELECT * FROM active_context_buffer WHERE id = %s", (thread_id,))
         row = cur.fetchone()
         return dict(row) if row else None
@@ -1625,7 +1625,7 @@ def get_buffer_stats(state_id: str = "default") -> Dict:
     """
     Get statistics about the context buffer.
     """
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         # Active threads
         cur.execute("""
             SELECT COUNT(*) as active_count,
@@ -1802,7 +1802,7 @@ def get_recent_capability_updates(
 
     since = datetime.now() - timedelta(hours=hours)
 
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         if include_expired:
             cur.execute("""
                 SELECT * FROM system_capability_update
@@ -2131,7 +2131,7 @@ def _recalculate_salience(cur, knowledge_item_id: str):
 
 def get_knowledge_salience(knowledge_item_id: str) -> Optional[Dict]:
     """Get salience data for a specific knowledge item."""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT * FROM knowledge_salience
             WHERE knowledge_item_id = %s
@@ -2260,7 +2260,7 @@ def get_high_salience_items(limit: int = 20, min_salience: float = 0.3) -> List[
 
     Useful for prioritizing what to show in context.
     """
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT *
             FROM knowledge_salience
@@ -2358,7 +2358,7 @@ def stage_profile(
 
 def get_staged_profile(profile_id: int) -> Optional[Dict]:
     """Get a specific staged profile by ID."""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT * FROM profile_staging WHERE id = %s
         """, (profile_id,))
@@ -2368,7 +2368,7 @@ def get_staged_profile(profile_id: int) -> Optional[Dict]:
 
 def get_pending_profiles(limit: int = 20) -> List[Dict]:
     """Get all profiles pending approval."""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT id, profile_data, source, target_person_id,
                    confidence_score, created_at, comparison_results
@@ -2664,7 +2664,7 @@ def save_session_learning(
 
 def get_session_learning(session_id: str) -> Optional[Dict]:
     """Get a specific session learning record."""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT * FROM ai_session_learnings WHERE session_id = %s
         """, (session_id,))
@@ -2693,7 +2693,7 @@ def list_session_learnings(
         processed: Filter by processed status
         limit: Max results
     """
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         conditions = []
         params = []
 

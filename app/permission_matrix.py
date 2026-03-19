@@ -143,7 +143,9 @@ class PermissionMatrix:
             FROM users
             WHERE id = %(user_id)s;
             """
-            results = safe_list_query(query, {"user_id": user_id}, context="get_user_role")
+            with safe_list_query("users") as cur:
+                cur.execute(query, {"user_id": user_id})
+                results = cur.fetchall()
             
             if results and len(results) > 0:
                 role_str = results[0].get("role", "user").lower()
@@ -258,7 +260,9 @@ class PermissionMatrix:
                 "window": window_minutes
             }
             
-            results = safe_list_query(query, params, context="check_rate_limit")
+            with safe_list_query("permission_audit") as cur:
+                cur.execute(query, params)
+                results = cur.fetchall()
             
             if results and len(results) > 0:
                 count = results[0].get("count", 0)
@@ -369,7 +373,8 @@ class PermissionMatrix:
                 "decision": decision
             }
             
-            safe_write_query(insert_sql, params, context="log_decision_link")
+            with safe_write_query("permission_decision_log") as cur:
+                cur.execute(insert_sql, params)
             return True
         except Exception as e:
             log_with_context(logger, "error", "Failed to log decision link", error=str(e), audit_id=audit_id)
@@ -397,7 +402,9 @@ class PermissionMatrix:
             
             query += " GROUP BY action, result ORDER BY count DESC;"
             
-            results = safe_list_query(query, params, context="get_permission_stats")
+            with safe_list_query("permission_audit") as cur:
+                cur.execute(query, params)
+                results = cur.fetchall()
             return {
                 "summary": [dict(r) for r in results] if results else [],
                 "queried_days": days_back,

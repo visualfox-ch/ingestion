@@ -66,17 +66,21 @@ class AuditTrail:
         sla_met BOOLEAN NOT NULL,
         audit_hash VARCHAR(64) NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        
-        -- Indexes for fast lookup
-        INDEX idx_request_id (request_id),
-        INDEX idx_approver_id (approver_id),
-        INDEX idx_decision_timestamp (decision_timestamp DESC),
-        INDEX idx_audit_hash (audit_hash),
-        INDEX idx_risk_class (risk_class),
-        
+
         -- Constraints for immutability
         CONSTRAINT audit_hash_immutable UNIQUE (audit_hash)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_approval_audit_log_request_id
+        ON approval_audit_log (request_id);
+    CREATE INDEX IF NOT EXISTS idx_approval_audit_log_approver_id
+        ON approval_audit_log (approver_id);
+    CREATE INDEX IF NOT EXISTS idx_approval_audit_log_decision_timestamp
+        ON approval_audit_log (decision_timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_approval_audit_log_audit_hash
+        ON approval_audit_log (audit_hash);
+    CREATE INDEX IF NOT EXISTS idx_approval_audit_log_risk_class
+        ON approval_audit_log (risk_class);
     
     -- Audit retention view (7 years per compliance requirement)
     CREATE OR REPLACE VIEW approval_audit_log_retention AS
@@ -85,7 +89,7 @@ class AuditTrail:
     AND created_at <= CURRENT_TIMESTAMP;
     
     -- SLA tracking materialized view (15 min business hours)
-    CREATE MATERIALIZED VIEW approval_sla_breaches AS
+    CREATE MATERIALIZED VIEW IF NOT EXISTS approval_sla_breaches AS
     SELECT
         audit_id,
         request_id,
@@ -112,11 +116,8 @@ class AuditTrail:
     def ensure_schema() -> bool:
         """Ensure audit trail table exists in PostgreSQL."""
         try:
-            safe_write_query(
-                AuditTrail.SCHEMA_SQL,
-                {},
-                context="audit_trail_schema_init"
-            )
+            with safe_write_query("approval_audit_log") as cur:
+                cur.execute(AuditTrail.SCHEMA_SQL)
             log_with_context(logger, "info", "Audit trail schema initialized")
             return True
         except Exception as e:
@@ -217,7 +218,9 @@ class AuditTrail:
                 "audit_hash": audit_hash
             }
             
-            result = safe_write_query(insert_sql, params, context="audit_record_insert")
+            with safe_write_query("approval_audit_log") as cur:
+                cur.execute(insert_sql, params)
+                result = cur.fetchone()
             
             # Log success
             log_with_context(
@@ -246,7 +249,9 @@ class AuditTrail:
         """Retrieve an audit record by audit_id."""
         try:
             query = "SELECT * FROM approval_audit_log WHERE audit_id = %(audit_id)s;"
-            results = safe_list_query(query, {"audit_id": audit_id}, context="audit_get_decision")
+            with safe_list_query("approval_audit_log") as cur:
+                cur.execute(query, {"audit_id": audit_id})
+                results = cur.fetchall()
             
             if results and len(results) > 0:
                 return dict(results[0])
@@ -303,7 +308,9 @@ class AuditTrail:
             ORDER BY decision_timestamp DESC;
             """ % days_back
             
-            results = safe_list_query(query, {}, context="audit_get_sla_breaches")
+            with safe_list_query("approval_audit_log") as cur:
+                cur.execute(query)
+                results = cur.fetchall()
             return [dict(r) for r in results] if results else []
         except Exception as e:
             log_with_context(logger, "error", "Failed to retrieve SLA breaches", error=str(e))
@@ -327,7 +334,9 @@ class AuditTrail:
             AND created_at >= CURRENT_TIMESTAMP - INTERVAL '%s days';
             """ % days_back
             
-            results = safe_list_query(query, {"approver_id": approver_id}, context="audit_approver_stats")
+            with safe_list_query("approval_audit_log") as cur:
+                cur.execute(query, {"approver_id": approver_id})
+                results = cur.fetchall()
             return dict(results[0]) if results and len(results) > 0 else {}
         except Exception as e:
             log_with_context(logger, "error", "Failed to get approver stats", error=str(e), approver_id=approver_id)

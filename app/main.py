@@ -11,6 +11,7 @@ from typing import Optional, List, Dict, Any
 import requests
 import json
 import time
+import threading
 from datetime import datetime
 import pytz
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -806,10 +807,26 @@ def startup_event():
         tracemalloc.start()
         logger.info("Memory profiling (tracemalloc) enabled")
 
-    # Preload embedding model to avoid cold-start latency on first search
-    logger.info("Preloading embedding model...")
-    get_model()
-    logger.info("Embedding model loaded")
+    # Preload embedding model. Default is background mode to avoid startup flapping.
+    preload_mode = os.getenv("EMBEDDING_PRELOAD_MODE", "background").strip().lower()
+
+    def _preload_embedding_model() -> None:
+        try:
+            logger.info("Preloading embedding model...")
+            get_model()
+            logger.info("Embedding model loaded")
+        except Exception as e:
+            logger.warning(f"Embedding model preload failed: {e}")
+
+    if preload_mode == "sync":
+        _preload_embedding_model()
+    else:
+        threading.Thread(
+            target=_preload_embedding_model,
+            name="embedding-model-preload",
+            daemon=True,
+        ).start()
+        logger.info("Embedding model preload started in background")
 
     # Initialize cross-session learning database tables
     try:
@@ -2736,6 +2753,16 @@ def agent_chat(req: AgentRequest, request: Request):
         scope_org=request_scope.org,
         scope_visibility=request_scope.visibility,
     ).inc()
+
+    # Warn when caller uses legacy namespace without explicit scope
+    if input_mode == "namespace":
+        log_with_context(
+            logger, "warning", "Legacy namespace used without scope - please migrate to scope",
+            namespace=raw_namespace,
+            resolved_scope_org=request_scope.org,
+            resolved_scope_visibility=request_scope.visibility,
+            source=req.source or "unknown",
+        )
 
     # Shadow-Read: verify namespace ↔ scope round-trip consistency
     shadow_namespace = request_scope.to_legacy_namespace()
