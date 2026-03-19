@@ -146,6 +146,31 @@ def test_continuity_uses_sqlite_contexts_and_topics(monkeypatch, tmp_path):
     assert result["active_days"] == 2
 
 
+def test_continuity_returns_no_data_when_no_recent_activity(monkeypatch, tmp_path):
+    state_db = tmp_path / "jarvis_state.db"
+    _create_state_db(state_db)
+    monkeypatch.setenv("JARVIS_STATE_DB", str(state_db))
+
+    service = SelfValidationService()
+
+    # Seed data is from 2026-03-07/08. Shift clock far enough so the 30-day window has no activity.
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    class _FutureDateTime(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _dt.now(tz) + _td(days=45)
+
+    monkeypatch.setattr("app.services.self_validation_service.datetime", _FutureDateTime)
+
+    result = service.conversation_continuity_test(user_id=42)
+
+    assert result["status"] == "no_data"
+    assert result["continuity_score_percent"] is None
+    assert result["active_days"] == 0
+
+
 def test_quality_score_uses_stddev_output_tokens_key():
     service = SelfValidationService()
     score = service._calculate_quality_score(
@@ -313,9 +338,9 @@ def test_calibration_ece_computed_from_sqlite(monkeypatch, tmp_path):
 
     service = SelfValidationService()
     # Insert calibration entries: high confidence but only half correct → non-zero ECE
-    for _ in range(5):
+    for _ in range(10):
         service.save_calibration_feedback(confidence=0.9, actual_correct=True, category="test")
-    for _ in range(5):
+    for _ in range(10):
         service.save_calibration_feedback(confidence=0.9, actual_correct=False, category="test")
 
     # Patch uncertainty_quantifier module-level function (imported inside method body)

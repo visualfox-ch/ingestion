@@ -1200,6 +1200,23 @@ class SelfValidationService:
                 ).fetchone()
                 topic_count = int(topic_row["count"] or 0)
 
+            # No activity in the analysis window should be treated as no_data,
+            # not as a hard continuity failure.
+            if not daily_sessions:
+                return {
+                    "status": "no_data",
+                    "timestamp": datetime.now().isoformat(),
+                    "user_id": user_id,
+                    "period_days": 30,
+                    "active_days": 0,
+                    "continuity_score_percent": None,
+                    "stored_contexts": context_count,
+                    "tracked_topics": topic_count,
+                    "session_gaps": None,
+                    "daily_breakdown": [],
+                    "message": "No conversation activity found in the last 30 days.",
+                }
+
             gaps: List[Dict[str, Any]] = []
             for index in range(len(daily_sessions) - 1):
                 newer = self._parse_timestamp(daily_sessions[index]["date"])
@@ -1804,6 +1821,20 @@ class SelfValidationService:
             if ece_value is not None:
                 ece_value = float(ece_value)
 
+            calibration_source = "quantifier_history"
+            calibration_samples = 0
+            min_calibration_samples = 20
+
+            seven_day_cutoff = datetime.now() - timedelta(days=days)
+            for entry in quantifier.history:
+                ts = self._parse_timestamp(entry.get("timestamp"))
+                if ts is None:
+                    continue
+                if ts.tzinfo is not None:
+                    ts = ts.replace(tzinfo=None)
+                if ts >= seven_day_cutoff:
+                    calibration_samples += 1
+
             if ece_value is None:
                 # SQLite calibration_feedback fallback: compute ECE from stored observations
                 try:
@@ -1816,20 +1847,22 @@ class SelfValidationService:
                         ).fetchall()
                         if _fb_rows:
                             _n = len(_fb_rows)
-                            _buckets: Dict[int, Dict[str, float]] = {}
-                            for _r in _fb_rows:
-                                _b = min(int(float(_r["confidence"]) * 10), 9)
-                                if _b not in _buckets:
-                                    _buckets[_b] = {"count": 0.0, "correct": 0.0}
-                                _buckets[_b]["count"] += 1
-                                _buckets[_b]["correct"] += int(_r["actual_correct"])
-                            _ece = 0.0
-                            for _b_idx, _bdata in _buckets.items():
-                                _mid = (_b_idx + 0.5) / 10.0
-                                _frac = _bdata["correct"] / _bdata["count"]
-                                _ece += (_bdata["count"] / _n) * abs(_frac - _mid)
-                            ece_value = round(_ece, 4)
-                            outcome_entries = _n
+                            calibration_source = "sqlite_calibration_feedback"
+                            calibration_samples = _n
+                            if _n >= min_calibration_samples:
+                                _buckets: Dict[int, Dict[str, float]] = {}
+                                for _r in _fb_rows:
+                                    _b = min(int(float(_r["confidence"]) * 10), 9)
+                                    if _b not in _buckets:
+                                        _buckets[_b] = {"count": 0.0, "correct": 0.0}
+                                    _buckets[_b]["count"] += 1
+                                    _buckets[_b]["correct"] += int(_r["actual_correct"])
+                                _ece = 0.0
+                                for _b_idx, _bdata in _buckets.items():
+                                    _mid = (_b_idx + 0.5) / 10.0
+                                    _frac = _bdata["correct"] / _bdata["count"]
+                                    _ece += (_bdata["count"] / _n) * abs(_frac - _mid)
+                                ece_value = round(_ece, 4)
                 except Exception as _exc:
                     logger.warning(f"Calibration SQLite fallback failed: {_exc}")
 
@@ -1841,17 +1874,6 @@ class SelfValidationService:
                     calibration_ece_status = "warn"
                 else:
                     calibration_ece_status = "fail"
-
-            seven_day_cutoff = datetime.now() - timedelta(days=days)
-            outcome_entries = 0
-            for entry in quantifier.history:
-                ts = self._parse_timestamp(entry.get("timestamp"))
-                if ts is None:
-                    continue
-                if ts.tzinfo is not None:
-                    ts = ts.replace(tzinfo=None)
-                if ts >= seven_day_cutoff:
-                    outcome_entries += 1
 
             total_assessments = 0
             try:
@@ -1874,7 +1896,7 @@ class SelfValidationService:
             coverage_value = None
             coverage_status = "no_data"
             if total_assessments > 0:
-                coverage_value = round((outcome_entries / total_assessments) * 100.0, 1)
+                coverage_value = round((calibration_samples / total_assessments) * 100.0, 1)
                 if coverage_value >= 30:
                     coverage_status = "pass"
                 elif coverage_value >= 15:
@@ -1927,6 +1949,16 @@ class SelfValidationService:
                     "status": coverage_status,
                     "value": coverage_value,
                     "thresholds": {"pass": ">=30", "warn": ">=15", "fail": "<15"},
+                },
+                "calibration_samples": {
+                    "status": "pass" if calibration_samples >= min_calibration_samples else ("warn" if calibration_samples > 0 else "no_data"),
+                    "value": calibration_samples,
+                    "source": calibration_source,
+                    "thresholds": {
+                        "pass": f">={min_calibration_samples}",
+                        "warn": f"1..{min_calibration_samples - 1}",
+                        "fail": "n/a",
+                    },
                 },
             }
 

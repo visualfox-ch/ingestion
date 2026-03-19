@@ -236,6 +236,13 @@ async def snapshot_web_docs(request: WebDocsSnapshotRequest):
         snapshot_result = run_web_docs_snapshot(config)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except requests.exceptions.SSLError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"TLS certificate verification failed while fetching docs URL: {exc}",
+        ) from exc
+    except requests.exceptions.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch docs URL: {exc}") from exc
     except requests.HTTPError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
