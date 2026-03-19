@@ -205,12 +205,94 @@ class SelfValidationService:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _get_or_create_state_conn(self) -> Optional[sqlite3.Connection]:
+        """Like _get_state_conn but creates the DB file when JARVIS_STATE_DB env is set."""
+        env_path = os.environ.get("JARVIS_STATE_DB")
+        if env_path:
+            p = Path(env_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(p))
+            conn.row_factory = sqlite3.Row
+            return conn
+        return self._get_state_conn()
+
     def _sqlite_table_exists(self, conn: sqlite3.Connection, table_name: str) -> bool:
         row = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
             (table_name,),
         ).fetchone()
         return row is not None
+
+    def _ensure_proactive_snapshots_table(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS proactive_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                user_id INTEGER,
+                acceptance_rate REAL,
+                proactivity_score REAL
+            )
+            """
+        )
+        conn.commit()
+
+    def _save_proactive_snapshot(
+        self,
+        acceptance_rate: Optional[float],
+        score: Optional[float],
+        user_id: Optional[int],
+    ) -> None:
+        if score is None and acceptance_rate is None:
+            return
+        try:
+            conn = self._get_or_create_state_conn()
+            if conn is None:
+                return
+            with conn:
+                self._ensure_proactive_snapshots_table(conn)
+                conn.execute(
+                    "INSERT INTO proactive_snapshots (timestamp, user_id, acceptance_rate, proactivity_score) VALUES (?, ?, ?, ?)",
+                    (datetime.now().isoformat(), user_id, acceptance_rate, score),
+                )
+        except Exception as exc:
+            logger.warning(f"Failed to save proactive snapshot: {exc}")
+
+    def _ensure_calibration_feedback_table(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS calibration_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                actual_correct INTEGER NOT NULL,
+                category TEXT
+            )
+            """
+        )
+        conn.commit()
+
+    def save_calibration_feedback(
+        self,
+        confidence: float,
+        actual_correct: bool,
+        category: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Persist a calibration data point (confidence vs actual outcome) to SQLite."""
+        try:
+            conn = self._get_or_create_state_conn()
+            if conn is None:
+                return {"status": "error", "error": "state_db unavailable"}
+            with conn:
+                self._ensure_calibration_feedback_table(conn)
+                conn.execute(
+                    "INSERT INTO calibration_feedback (timestamp, confidence, actual_correct, category) VALUES (?, ?, ?, ?)",
+                    (datetime.now().isoformat(), float(confidence), int(actual_correct), category),
+                )
+            return {"status": "success", "timestamp": datetime.now().isoformat()}
+        except Exception as exc:
+            logger.error(f"Failed to save calibration feedback: {exc}")
+            return {"status": "error", "error": str(exc)}
 
     def _pg_table_exists(self, table_name: str) -> bool:
         try:
@@ -1276,7 +1358,7 @@ class SelfValidationService:
                     else:
                         score = None
 
-                    return {
+                    result_proactive = {
                         "status": "success",
                         "timestamp": datetime.now().isoformat(),
                         "user_id": user_id,
@@ -1297,6 +1379,8 @@ class SelfValidationService:
                         "assessment": self._assess_proactivity(score),
                         "data_source": "proactive_service_memory",
                     }
+                    self._save_proactive_snapshot(acceptance_rate, score, user_id)
+                    return result_proactive
                 except Exception as exc:
                     logger.warning(f"Proactive fallback metrics unavailable: {exc}")
                     return {
@@ -1370,6 +1454,7 @@ class SelfValidationService:
             else:
                 score = None
 
+            self._save_proactive_snapshot(hint_stats.get("acceptance_rate"), score, user_id)
             return {
                 "status": "success",
                 "timestamp": datetime.now().isoformat(),
@@ -1528,6 +1613,37 @@ class SelfValidationService:
                     else:
                         proactive_score_status = "fail"
 
+            if proactive_acceptance is None and proactive_score_value is None:
+                # SQLite fallback: read latest persisted proactive snapshot
+                try:
+                    _conn = self._get_state_conn()
+                    if _conn is not None and self._sqlite_table_exists(_conn, "proactive_snapshots"):
+                        _cutoff = (datetime.now() - timedelta(days=7)).isoformat()
+                        _row = _conn.execute(
+                            "SELECT acceptance_rate, proactivity_score FROM proactive_snapshots "
+                            "WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT 1",
+                            (_cutoff,),
+                        ).fetchone()
+                        if _row:
+                            proactive_acceptance = _row["acceptance_rate"]
+                            proactive_score_value = _row["proactivity_score"]
+                            if proactive_acceptance is not None:
+                                if proactive_acceptance >= 35:
+                                    proactive_acceptance_status = "pass"
+                                elif proactive_acceptance >= 20:
+                                    proactive_acceptance_status = "warn"
+                                else:
+                                    proactive_acceptance_status = "fail"
+                            if proactive_score_value is not None:
+                                if proactive_score_value >= 55:
+                                    proactive_score_status = "pass"
+                                elif proactive_score_value >= 35:
+                                    proactive_score_status = "warn"
+                                else:
+                                    proactive_score_status = "fail"
+                except Exception as _exc:
+                    logger.warning(f"Proactive SQLite fallback failed: {_exc}")
+
             agency_snapshot = self._agency_metrics_snapshot(hours=hours)
             rollback_rate = agency_snapshot.get("autonomy_rollback_rate")
             rollback_status = "no_data"
@@ -1556,6 +1672,35 @@ class SelfValidationService:
             ece_value = calibration_report.get("overall_ece")
             if ece_value is not None:
                 ece_value = float(ece_value)
+
+            if ece_value is None:
+                # SQLite calibration_feedback fallback: compute ECE from stored observations
+                try:
+                    _conn = self._get_state_conn()
+                    if _conn is not None and self._sqlite_table_exists(_conn, "calibration_feedback"):
+                        _cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+                        _fb_rows = _conn.execute(
+                            "SELECT confidence, actual_correct FROM calibration_feedback WHERE timestamp >= ?",
+                            (_cutoff,),
+                        ).fetchall()
+                        if _fb_rows:
+                            _n = len(_fb_rows)
+                            _buckets: Dict[int, Dict[str, float]] = {}
+                            for _r in _fb_rows:
+                                _b = min(int(float(_r["confidence"]) * 10), 9)
+                                if _b not in _buckets:
+                                    _buckets[_b] = {"count": 0.0, "correct": 0.0}
+                                _buckets[_b]["count"] += 1
+                                _buckets[_b]["correct"] += int(_r["actual_correct"])
+                            _ece = 0.0
+                            for _b_idx, _bdata in _buckets.items():
+                                _mid = (_b_idx + 0.5) / 10.0
+                                _frac = _bdata["correct"] / _bdata["count"]
+                                _ece += (_bdata["count"] / _n) * abs(_frac - _mid)
+                            ece_value = round(_ece, 4)
+                            outcome_entries = _n
+                except Exception as _exc:
+                    logger.warning(f"Calibration SQLite fallback failed: {_exc}")
 
             calibration_ece_status = "no_data"
             if ece_value is not None:

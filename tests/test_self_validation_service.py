@@ -164,3 +164,124 @@ def test_proactivity_score_returns_no_data_without_table(monkeypatch):
     result = service.proactivity_score()
 
     assert result["status"] == "no_data"
+
+
+# =============================================================================
+# T-RI-06 Tests: agency P95, proactive SQLite, calibration feedback
+# =============================================================================
+
+import json
+import os
+import tempfile
+from datetime import datetime, timedelta
+
+
+def _write_action_queue_file(path, created_offset_sec, decision_offset_sec, status="approved"):
+    """Helper: write an action queue JSON file to the given path."""
+    now = datetime.now()
+    created_at = (now - timedelta(seconds=created_offset_sec)).isoformat() + "Z"
+    ts_key = f"{status}_at"
+    decision_at = (now - timedelta(seconds=decision_offset_sec)).isoformat() + "Z"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"created_at": created_at, ts_key: decision_at, "action": "test"}, f)
+
+
+def test_agency_p95_from_action_queue(monkeypatch, tmp_path):
+    """P95 approval latency is read correctly from action queue JSON files."""
+    aq_base = tmp_path / "action_queue"
+    # Three approved records: latencies 60s, 120s, 600s
+    # _percentile: sorted=[60,120,600], idx=int(2*0.95)=1 → 120s
+    for i, latency in enumerate([60, 120, 600]):
+        _write_action_queue_file(
+            str(aq_base / "approved" / f"rec{i}.json"),
+            created_offset_sec=3600 + latency,
+            decision_offset_sec=3600,
+        )
+
+    monkeypatch.setenv("ACTION_QUEUE_PATH", str(aq_base))
+    service = SelfValidationService()
+    snapshot = service._agency_metrics_snapshot(hours=48)
+
+    p95 = snapshot["approval_p95_seconds"]
+    assert p95 is not None
+    # sorted [60,120,600], idx = int(2*0.95) = 1 → 120s
+    assert p95 == 120.0
+    assert snapshot["autonomy_rollback_rate"] is None  # no Prometheus data in unit test
+
+
+def test_proactive_snapshot_saves_and_reads_from_sqlite(monkeypatch, tmp_path):
+    """_save_proactive_snapshot writes to SQLite; reality_check uses it as fallback."""
+    db_path = tmp_path / "jarvis_state.db"
+    monkeypatch.setenv("JARVIS_STATE_DB", str(db_path))
+
+    service = SelfValidationService()
+    # Directly call the save helper
+    service._save_proactive_snapshot(acceptance_rate=42.0, score=58.5, user_id=None)
+
+    # Verify it was persisted
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT acceptance_rate, proactivity_score FROM proactive_snapshots ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+
+    assert row is not None
+    assert abs(row["acceptance_rate"] - 42.0) < 0.01
+    assert abs(row["proactivity_score"] - 58.5) < 0.01
+
+
+def test_calibration_feedback_saves_to_sqlite(monkeypatch, tmp_path):
+    """save_calibration_feedback writes a row to calibration_feedback table."""
+    db_path = tmp_path / "jarvis_state.db"
+    monkeypatch.setenv("JARVIS_STATE_DB", str(db_path))
+
+    service = SelfValidationService()
+    result = service.save_calibration_feedback(confidence=0.8, actual_correct=True, category="intent")
+
+    assert result["status"] == "success"
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT confidence, actual_correct, category FROM calibration_feedback LIMIT 1").fetchone()
+    conn.close()
+
+    assert row is not None
+    assert abs(row["confidence"] - 0.8) < 0.01
+    assert row["actual_correct"] == 1
+    assert row["category"] == "intent"
+
+
+def test_calibration_ece_computed_from_sqlite(monkeypatch, tmp_path):
+    """ECE is computed from calibration_feedback SQLite rows when quantifier has no history."""
+    db_path = tmp_path / "jarvis_state.db"
+    monkeypatch.setenv("JARVIS_STATE_DB", str(db_path))
+
+    service = SelfValidationService()
+    # Insert calibration entries: high confidence but only half correct → non-zero ECE
+    for _ in range(5):
+        service.save_calibration_feedback(confidence=0.9, actual_correct=True, category="test")
+    for _ in range(5):
+        service.save_calibration_feedback(confidence=0.9, actual_correct=False, category="test")
+
+    # Patch uncertainty_quantifier module-level function (imported inside method body)
+    class _FakeQuantifier:
+        history = []
+        def get_calibration_report(self):
+            return {"overall_ece": None}
+
+    import app.uncertainty_quantifier as _uq_mod
+    monkeypatch.setattr(_uq_mod, "get_uncertainty_quantifier", lambda: _FakeQuantifier())
+    monkeypatch.setattr(service, "_pg_table_exists", lambda t: False)
+    monkeypatch.setattr(service, "_resolve_action_queue_path", lambda: None)
+
+    result = service.reality_check_snapshot(hours=168, days=7, user_id=None)
+
+    assert result["status"] == "success"
+    cal_metrics = result["dimensions"]["calibration"]["metrics"]
+    ece = cal_metrics["calibration_ece"]["value"]
+    # 10 samples at confidence=0.9, 50% correct → ECE ≈ |0.5 - 0.95| * 1.0 = 0.45
+    assert ece is not None
+    assert ece > 0.0
+

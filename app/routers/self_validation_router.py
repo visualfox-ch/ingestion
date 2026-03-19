@@ -222,6 +222,33 @@ async def get_reality_check_snapshot(
 
 
 # =============================================================================
+# T-RI-06 Step 3: Calibration Feedback
+# =============================================================================
+
+@router.post("/calibration-feedback", response_model=Dict[str, Any])
+async def submit_calibration_feedback(
+    confidence: float = Query(..., ge=0.0, le=1.0, description="Predicted confidence [0..1]"),
+    actual_correct: bool = Query(..., description="Whether the prediction was correct"),
+    category: Optional[str] = Query(None, description="Optional label/category"),
+):
+    """
+    Submit a calibration data point (confidence vs actual outcome).
+
+    Used to build an ECE (Expected Calibration Error) baseline from real
+    outcomes. Stored in SQLite state DB and read as fallback in
+    /self/reality-check-snapshot when the uncertainty_quantifier has no data.
+    """
+    from ..services.self_validation_service import get_self_validation_service
+
+    service = get_self_validation_service()
+    return service.save_calibration_feedback(
+        confidence=confidence,
+        actual_correct=actual_correct,
+        category=category,
+    )
+
+
+# =============================================================================
 # PHASE 19: SCHEDULED SELF-DIAGNOSTICS
 # =============================================================================
 
