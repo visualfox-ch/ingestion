@@ -3,9 +3,11 @@ Jarvis Scheduler
 Handles scheduled tasks like daily briefings.
 """
 import os
+import json
 import logging
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Optional, Dict, Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -60,8 +62,233 @@ ML_PATTERN_INTERVAL_HOURS = int(os.environ.get("JARVIS_ML_PATTERN_INTERVAL_HOURS
 AUTO_REFACTOR_ENABLED = os.environ.get("JARVIS_AUTO_REFACTOR_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 AUTO_REFACTOR_HOUR = int(os.environ.get("JARVIS_AUTO_REFACTOR_HOUR", "3"))  # 03:00 daily
 
+# Maintenance Jobs (Tool Activation Strategy)
+MEMORY_DECAY_ENABLED = os.environ.get("JARVIS_MEMORY_DECAY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+MEMORY_DECAY_HOUR = int(os.environ.get("JARVIS_MEMORY_DECAY_HOUR", "3"))  # 03:00 daily
+
+DUPLICATE_CLEANUP_ENABLED = os.environ.get("JARVIS_DUPLICATE_CLEANUP_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+DUPLICATE_CLEANUP_DAY = os.environ.get("JARVIS_DUPLICATE_CLEANUP_DAY", "sun")  # Sunday
+DUPLICATE_CLEANUP_HOUR = int(os.environ.get("JARVIS_DUPLICATE_CLEANUP_HOUR", "4"))  # 04:00
+
+ANOMALY_ANALYSIS_ENABLED = os.environ.get("JARVIS_ANOMALY_ANALYSIS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+ANOMALY_ANALYSIS_INTERVAL_HOURS = int(os.environ.get("JARVIS_ANOMALY_ANALYSIS_INTERVAL_HOURS", "2"))  # Every 2h
+
+USAGE_ANOMALY_ENABLED = os.environ.get("JARVIS_USAGE_ANOMALY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+USAGE_ANOMALY_HOUR = int(os.environ.get("JARVIS_USAGE_ANOMALY_HOUR", "6"))  # 06:00 daily
+
+WEEKLY_TOOL_REPORT_ENABLED = os.environ.get("JARVIS_WEEKLY_TOOL_REPORT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+WEEKLY_TOOL_REPORT_DAY = os.environ.get("JARVIS_WEEKLY_TOOL_REPORT_DAY", "sun")  # Sunday
+WEEKLY_TOOL_REPORT_HOUR = int(os.environ.get("JARVIS_WEEKLY_TOOL_REPORT_HOUR", "10"))  # 10:00
+
+SELF_OPTIMIZATION_ENABLED = os.environ.get("JARVIS_SELF_OPTIMIZATION_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+SELF_OPTIMIZATION_DAY = os.environ.get("JARVIS_SELF_OPTIMIZATION_DAY", "mon")  # Monday
+SELF_OPTIMIZATION_HOUR = int(os.environ.get("JARVIS_SELF_OPTIMIZATION_HOUR", "9"))  # 09:00
+
+# Alias auto-sunset check (weekly Sunday, 30-day idle window)
+ALIAS_SUNSET_CHECK_ENABLED = os.environ.get("JARVIS_ALIAS_SUNSET_CHECK_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+ALIAS_SUNSET_CHECK_HOUR = int(os.environ.get("JARVIS_ALIAS_SUNSET_CHECK_HOUR", "5"))  # 05:00 Sunday
+
+# Phase 22E PoC: pre-meeting proactive suggestions (parallel-safe with T-22A)
+PRE_MEETING_PUSH_ENABLED = os.environ.get("JARVIS_PRE_MEETING_PUSH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+PRE_MEETING_LOOKAHEAD_MINUTES = int(os.environ.get("JARVIS_PRE_MEETING_LOOKAHEAD_MINUTES", "30"))
+PRE_MEETING_CHECK_INTERVAL_MINUTES = int(os.environ.get("JARVIS_PRE_MEETING_CHECK_INTERVAL_MINUTES", "5"))
+PRE_MEETING_CONTEXT_LIMIT = int(os.environ.get("JARVIS_PRE_MEETING_CONTEXT_LIMIT", "2"))
+PRE_MEETING_STATE_PATH = os.environ.get(
+    "JARVIS_PRE_MEETING_STATE_PATH",
+    "/brain/system/data/scheduler/pre_meeting_sent.json",
+)
+
 # Timezone (from environment or default)
 TIMEZONE = os.environ.get("TZ", "Europe/Zurich")
+
+
+def _parse_event_start(start_raw: str) -> Optional[datetime]:
+    """Parse ISO datetime/date from normalized calendar event start field."""
+    if not start_raw:
+        return None
+
+    try:
+        if "T" in start_raw:
+            dt = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+        else:
+            dt = datetime.strptime(start_raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def _load_pre_meeting_state() -> Dict[str, float]:
+    """Load dedup state map for already sent pre-meeting notifications."""
+    path = Path(PRE_MEETING_STATE_PATH)
+    if not path.exists():
+        return {}
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        sent = payload.get("sent", {}) if isinstance(payload, dict) else {}
+        if isinstance(sent, dict):
+            return {str(k): float(v) for k, v in sent.items()}
+    except Exception as e:
+        log_with_context(logger, "warning", "Failed to load pre-meeting state", error=str(e))
+    return {}
+
+
+def _save_pre_meeting_state(sent: Dict[str, float]) -> None:
+    """Persist dedup state for pre-meeting notifications."""
+    path = Path(PRE_MEETING_STATE_PATH)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"sent": sent}, ensure_ascii=True, sort_keys=True), encoding="utf-8")
+    except Exception as e:
+        log_with_context(logger, "warning", "Failed to persist pre-meeting state", error=str(e))
+
+
+def _prune_pre_meeting_state(sent: Dict[str, float], now_ts: float) -> Dict[str, float]:
+    """Drop old dedup entries to keep state compact."""
+    keep_after = now_ts - (2 * 24 * 60 * 60)
+    return {k: ts for k, ts in sent.items() if ts >= keep_after}
+
+
+def _build_pre_meeting_key(user_id: int, event: Dict[str, Any], start_dt: datetime) -> str:
+    """Stable dedup key for one user + one calendar event start."""
+    event_id = event.get("id") or ""
+    summary = (event.get("summary") or "").strip()
+    account = event.get("account") or "unknown"
+    return f"{user_id}:{account}:{event_id}:{summary}:{start_dt.isoformat()}"
+
+
+def _fetch_pre_meeting_context_lines(event: Dict[str, Any], namespace: str) -> list[str]:
+    """Fetch concise context snippets from Qdrant-backed search for the upcoming meeting."""
+    query_parts = [event.get("summary", "")]
+    if event.get("location"):
+        query_parts.append(event.get("location", ""))
+    attendees = event.get("attendees") or []
+    if attendees:
+        query_parts.append(" ".join(attendees[:2]))
+    query = " ".join(p for p in query_parts if p).strip()
+    if not query:
+        return []
+
+    try:
+        from .tools import tool_search_knowledge
+
+        result = tool_search_knowledge(
+            query=query,
+            namespace=namespace,
+            limit=max(1, PRE_MEETING_CONTEXT_LIMIT),
+            recency_days=60,
+        )
+        lines = []
+        for item in result.get("results", [])[:PRE_MEETING_CONTEXT_LIMIT]:
+            text = (item.get("text") or "").replace("\n", " ").strip()
+            source = item.get("source_path") or item.get("label") or "context"
+            if text:
+                lines.append(f"- {source}: {text[:140]}")
+        return lines
+    except Exception as e:
+        log_with_context(logger, "warning", "Pre-meeting context lookup failed", error=str(e))
+        return []
+
+
+def _format_pre_meeting_message(event: Dict[str, Any], start_dt: datetime, minutes_left: int, context_lines: list[str]) -> str:
+    """Render Telegram-friendly pre-meeting suggestion text."""
+    def _escape_md(text: str) -> str:
+        # Telegram Markdown mode is sensitive to a small set of characters
+        # that frequently appear in file paths and context snippets.
+        return (
+            text.replace("\\", "\\\\")
+            .replace("_", "\\_")
+            .replace("*", "\\*")
+            .replace("[", "\\[")
+            .replace("]", "\\]")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+        )
+
+    account = _escape_md(event.get("account", ""))
+    account_prefix = f"[{account}] " if account else ""
+    summary = _escape_md(event.get("summary", "Termin"))
+    location = _escape_md(event.get("location", ""))
+    location_line = f"\nOrt: {location}" if location else ""
+    start_local = start_dt.astimezone()
+    when_line = start_local.strftime("%d.%m.%Y %H:%M")
+
+    message = (
+        f"📌 *Meeting-Hinweis* ({minutes_left} min)\n"
+        f"{account_prefix}*{summary}*\n"
+        f"Start: {when_line}{location_line}"
+    )
+    if context_lines:
+        escaped_context = [_escape_md(line) for line in context_lines]
+        message += "\n\n*Relevanter Kontext:*\n" + "\n".join(escaped_context)
+    message += "\n\nVorschlag: Soll ich dir eine kurze Vorbereitung oder Follow-up-Notiz erstellen?"
+    return message
+
+
+def _get_pre_meeting_dependencies():
+    """Import dependencies in one place so tests can stub them cleanly."""
+    from . import state_db
+    from . import n8n_client
+
+    return state_db, n8n_client
+
+
+def send_pre_meeting_suggestions() -> None:
+    """Phase 22E PoC: proactively notify users about meetings starting soon."""
+    if not PRE_MEETING_PUSH_ENABLED:
+        return
+
+    try:
+        state_db, n8n_client = _get_pre_meeting_dependencies()
+        users = state_db.get_all_telegram_users()
+        if not users:
+            return
+
+        events = n8n_client.get_calendar_events(timeframe="today", account="all")
+        now_utc = datetime.now(timezone.utc)
+        state = _prune_pre_meeting_state(_load_pre_meeting_state(), now_utc.timestamp())
+        sent_count = 0
+
+        for user in users:
+            user_id = user.get("user_id")
+            if user_id is None:
+                continue
+            namespace = user.get("namespace") or "work_projektil"
+
+            for event in events:
+                if event.get("all_day"):
+                    continue
+                start_dt = _parse_event_start(event.get("start", ""))
+                if not start_dt:
+                    continue
+
+                minutes_left = int((start_dt - now_utc).total_seconds() // 60)
+                if minutes_left < 0 or minutes_left > PRE_MEETING_LOOKAHEAD_MINUTES:
+                    continue
+
+                dedup_key = _build_pre_meeting_key(user_id, event, start_dt)
+                if dedup_key in state:
+                    continue
+
+                context_lines = _fetch_pre_meeting_context_lines(event, namespace)
+                message = _format_pre_meeting_message(event, start_dt, minutes_left, context_lines)
+                _send_telegram_message(user_id, message)
+                state[dedup_key] = now_utc.timestamp()
+                sent_count += 1
+
+        if sent_count:
+            _save_pre_meeting_state(state)
+            log_with_context(
+                logger,
+                "info",
+                "Pre-meeting suggestions sent",
+                count=sent_count,
+                lookahead_minutes=PRE_MEETING_LOOKAHEAD_MINUTES,
+            )
+    except Exception as e:
+        log_with_context(logger, "error", "Pre-meeting suggestion job failed", error=str(e))
 
 
 def send_telegram_briefing():
@@ -401,6 +628,16 @@ def start_scheduler() -> bool:
             replace_existing=True
         )
 
+        # Phase 22E PoC: pre-meeting proactive suggestions
+        if PRE_MEETING_PUSH_ENABLED:
+            _scheduler.add_job(
+                send_pre_meeting_suggestions,
+                IntervalTrigger(minutes=PRE_MEETING_CHECK_INTERVAL_MINUTES),
+                id="pre_meeting_suggestions",
+                name="Pre-Meeting Suggestions",
+                replace_existing=True,
+            )
+
         # Schedule autonomous research (daily)
         if AUTO_RESEARCH_ENABLED:
             from .jobs.autonomous_research_job import run_autonomous_research_job
@@ -442,6 +679,85 @@ def start_scheduler() -> bool:
                 replace_existing=True
             )
 
+        # ===== Maintenance Jobs (Tool Activation Strategy) =====
+
+        # Schedule memory decay (daily at 03:00)
+        if MEMORY_DECAY_ENABLED:
+            from .jobs.maintenance_jobs import run_memory_decay_job
+            _scheduler.add_job(
+                run_memory_decay_job,
+                CronTrigger(hour=MEMORY_DECAY_HOUR, minute=0),
+                id="memory_decay",
+                name="Memory Decay",
+                replace_existing=True
+            )
+
+        # Schedule duplicate cleanup (weekly Sunday at 04:00)
+        if DUPLICATE_CLEANUP_ENABLED:
+            from .jobs.maintenance_jobs import run_duplicate_cleanup_job
+            _scheduler.add_job(
+                run_duplicate_cleanup_job,
+                CronTrigger(day_of_week=DUPLICATE_CLEANUP_DAY, hour=DUPLICATE_CLEANUP_HOUR, minute=0),
+                id="duplicate_cleanup",
+                name="Duplicate Cleanup",
+                replace_existing=True
+            )
+
+        # Schedule anomaly analysis (every 2 hours)
+        if ANOMALY_ANALYSIS_ENABLED:
+            from .jobs.maintenance_jobs import run_anomaly_analysis_job
+            _scheduler.add_job(
+                run_anomaly_analysis_job,
+                IntervalTrigger(hours=ANOMALY_ANALYSIS_INTERVAL_HOURS),
+                id="anomaly_analysis",
+                name="Anomaly Analysis",
+                replace_existing=True
+            )
+
+        # Schedule usage anomaly detection (daily at 06:00)
+        if USAGE_ANOMALY_ENABLED:
+            from .jobs.maintenance_jobs import run_usage_anomaly_detection_job
+            _scheduler.add_job(
+                run_usage_anomaly_detection_job,
+                CronTrigger(hour=USAGE_ANOMALY_HOUR, minute=0),
+                id="usage_anomaly_detection",
+                name="Usage Anomaly Detection",
+                replace_existing=True
+            )
+
+        # Schedule weekly tool report (Sunday at 10:00)
+        if WEEKLY_TOOL_REPORT_ENABLED:
+            from .jobs.maintenance_jobs import run_weekly_tool_report_job
+            _scheduler.add_job(
+                run_weekly_tool_report_job,
+                CronTrigger(day_of_week=WEEKLY_TOOL_REPORT_DAY, hour=WEEKLY_TOOL_REPORT_HOUR, minute=0),
+                id="weekly_tool_report",
+                name="Weekly Tool Report",
+                replace_existing=True
+            )
+
+        # Schedule self-optimization analysis (Monday at 09:00)
+        if SELF_OPTIMIZATION_ENABLED:
+            from .jobs.maintenance_jobs import run_self_optimization_job
+            _scheduler.add_job(
+                run_self_optimization_job,
+                CronTrigger(day_of_week=SELF_OPTIMIZATION_DAY, hour=SELF_OPTIMIZATION_HOUR, minute=0),
+                id="self_optimization",
+                name="Self-Optimization Analysis",
+                replace_existing=True
+            )
+
+        # Schedule alias auto-sunset check (weekly Sunday at 05:00)
+        if ALIAS_SUNSET_CHECK_ENABLED:
+            from .jobs.alias_sunset_job import run_alias_sunset_check
+            _scheduler.add_job(
+                run_alias_sunset_check,
+                CronTrigger(day_of_week="sun", hour=ALIAS_SUNSET_CHECK_HOUR, minute=0),
+                id="alias_sunset_check",
+                name="Alias Auto-Sunset Check",
+                replace_existing=True
+            )
+
         _scheduler.start()
         log_with_context(logger, "info", "Scheduler started",
                 briefing_time=f"{BRIEFING_HOUR:02d}:{BRIEFING_MINUTE:02d}",
@@ -452,8 +768,15 @@ def start_scheduler() -> bool:
                 self_diagnostics_interval=f"every {SELF_DIAGNOSTICS_INTERVAL_HOURS}h" if SELF_DIAGNOSTICS_ENABLED else "disabled",
                 auto_research_time=f"{AUTO_RESEARCH_HOUR:02d}:{AUTO_RESEARCH_MINUTE:02d}" if AUTO_RESEARCH_ENABLED else "disabled",
                 batch_queue_interval=f"every {BATCH_QUEUE_INTERVAL_MINUTES}m" if BATCH_QUEUE_ENABLED else "disabled",
+                pre_meeting_interval=f"every {PRE_MEETING_CHECK_INTERVAL_MINUTES}m" if PRE_MEETING_PUSH_ENABLED else "disabled",
                 ml_pattern_interval=f"every {ML_PATTERN_INTERVAL_HOURS}h" if ML_PATTERN_ENABLED else "disabled",
                 auto_refactor_time=f"{AUTO_REFACTOR_HOUR:02d}:00" if AUTO_REFACTOR_ENABLED else "disabled",
+                memory_decay_time=f"{MEMORY_DECAY_HOUR:02d}:00" if MEMORY_DECAY_ENABLED else "disabled",
+                duplicate_cleanup=f"{DUPLICATE_CLEANUP_DAY} {DUPLICATE_CLEANUP_HOUR:02d}:00" if DUPLICATE_CLEANUP_ENABLED else "disabled",
+                anomaly_analysis_interval=f"every {ANOMALY_ANALYSIS_INTERVAL_HOURS}h" if ANOMALY_ANALYSIS_ENABLED else "disabled",
+                usage_anomaly_time=f"{USAGE_ANOMALY_HOUR:02d}:00" if USAGE_ANOMALY_ENABLED else "disabled",
+                weekly_tool_report=f"{WEEKLY_TOOL_REPORT_DAY} {WEEKLY_TOOL_REPORT_HOUR:02d}:00" if WEEKLY_TOOL_REPORT_ENABLED else "disabled",
+                self_optimization=f"{SELF_OPTIMIZATION_DAY} {SELF_OPTIMIZATION_HOUR:02d}:00" if SELF_OPTIMIZATION_ENABLED else "disabled",
                 timezone=TIMEZONE)
         return True
 

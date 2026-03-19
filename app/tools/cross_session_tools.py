@@ -79,7 +79,7 @@ def get_cross_session_tools() -> List[Dict[str, Any]]:
                     },
                     "specialist": {
                         "type": "string",
-                        "enum": ["fit", "work", "comm"],
+                        "enum": ["fit", "work", "comm", "saas"],
                         "description": "Zuständiger Specialist (optional)"
                     },
                     "priority": {
@@ -160,7 +160,7 @@ def get_cross_session_tools() -> List[Dict[str, Any]]:
                     },
                     "for_specialist": {
                         "type": "string",
-                        "enum": ["fit", "work", "comm"],
+                        "enum": ["fit", "work", "comm", "saas"],
                         "description": "Ziel-Specialist (optional)"
                     },
                     "priority": {

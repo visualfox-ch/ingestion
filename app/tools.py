@@ -539,265 +539,9 @@ TOOL_DEFINITIONS = [
             }
         }
     },
-    {
-        "name": "delegate_ollama_task",
-        "description": "Delegate a task to local Ollama via the queue. Use for summarization, extraction, translation, classification, formatting, or simple generation.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_type": {
-                    "type": "string",
-                    "enum": ["summarize", "extract", "translate", "classify", "generate", "analyze", "format"],
-                    "description": "Type of task to run on Ollama"
-                },
-                "instructions": {
-                    "type": "string",
-                    "description": "Clear instructions for the task"
-                },
-                "input_text": {
-                    "type": "string",
-                    "description": "Direct text input (mutually exclusive with input_path)"
-                },
-                "input_path": {
-                    "type": "string",
-                    "description": "Path to input file (mutually exclusive with input_text)"
-                },
-                "output_path": {
-                    "type": "string",
-                    "description": "Optional path to write the result"
-                },
-                "model": {
-                    "type": "string",
-                    "description": "Preferred Ollama model (optional)"
-                },
-                "max_tokens": {
-                    "type": "integer",
-                    "description": "Maximum output tokens",
-                    "default": 1000
-                },
-                "temperature": {
-                    "type": "number",
-                    "description": "Sampling temperature (0.0-1.0)",
-                    "default": 0.3
-                },
-                "language": {
-                    "type": "string",
-                    "description": "Output language",
-                    "default": "de"
-                },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["text", "json", "markdown", "bullet_points"],
-                    "default": "text"
-                },
-                "callback_url": {
-                    "type": "string",
-                    "description": "Optional callback URL (allowlist enforced)"
-                }
-            },
-            "required": ["task_type", "instructions"]
-        }
-    },
-    {
-        "name": "set_timer",
-        "description": "Create a reminder timer scheduled via n8n and stored in Redis.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "description": "Reminder text to send"
-                },
-                "delay_seconds": {
-                    "type": "integer",
-                    "description": "Delay in seconds"
-                },
-                "delay_minutes": {
-                    "type": "number",
-                    "description": "Delay in minutes"
-                },
-                "due_at": {
-                    "type": "string",
-                    "description": "ISO timestamp for when to fire"
-                },
-                "user_id": {
-                    "type": "string",
-                    "description": "Telegram user id (defaults to current user)"
-                },
-                "confirm": {
-                    "type": "boolean",
-                    "description": "Confirm creation for long timers",
-                    "default": False
-                }
-            },
-            "required": ["message"]
-        }
-    },
-    {
-        "name": "cancel_timer",
-        "description": "Cancel an existing timer by timer_id.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "timer_id": {
-                    "type": "string",
-                    "description": "Timer ID to cancel"
-                },
-                "user_id": {
-                    "type": "string",
-                    "description": "User id (optional)"
-                }
-            },
-            "required": ["timer_id"]
-        }
-    },
-    {
-        "name": "list_timers",
-        "description": "List timers for a user.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "user_id": {
-                    "type": "string",
-                    "description": "User id (optional)"
-                },
-                "status": {
-                    "type": "string",
-                    "description": "Filter by status (pending, fired, canceled)"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max timers to return",
-                    "default": 50
-                }
-            }
-        }
-    },
-    {
-        "name": "get_ollama_task_status",
-        "description": "Get status for a queued Ollama task by task_id.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "Ollama task ID"
-                }
-            },
-            "required": ["task_id"]
-        }
-    },
-    {
-        "name": "get_ollama_callback_result",
-        "description": "Get the result of a completed async Ollama task. Use after delegate_ollama_task to retrieve the result once the task has been processed.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "Ollama task ID to get result for"
-                },
-                "recent_only": {
-                    "type": "boolean",
-                    "description": "If true and no task_id provided, return recent callbacks"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max number of recent callbacks to return",
-                    "default": 10
-                }
-            }
-        }
-    },
-    {
-        "name": "ask_ollama",
-        "description": "Ask local Ollama LLM a question and get an answer. SAVES API TOKENS! Use as sub-assistant for: summarization, translation, text analysis, format conversion, simple Q&A, classification. Ollama runs locally and is FREE. Wait for the response (may take 30-60s on first call while model loads).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "The question or task for Ollama. Be clear and specific."
-                },
-                "task_type": {
-                    "type": "string",
-                    "enum": ["summarize", "translate", "analyze", "classify", "format", "generate", "extract"],
-                    "description": "Type of task (helps select best model)",
-                    "default": "analyze"
-                },
-                "system_prompt": {
-                    "type": "string",
-                    "description": "Optional custom system prompt to override default assistant behavior"
-                },
-                "max_tokens": {
-                    "type": "integer",
-                    "description": "Max response tokens (default: 1500)"
-                }
-            },
-            "required": ["prompt"]
-        }
-    },
-    {
-        "name": "ollama_python",
-        "description": "Generate and execute Python code via local Ollama. SAVES API TOKENS by using local LLM for code generation. Use this for calculations, data processing, analysis, formatting, or any task that can be solved with Python code. The code runs in a secure sandbox.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_description": {
-                    "type": "string",
-                    "description": "Natural language description of what to compute or do. Be specific about expected output format."
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Optional additional context or data to use in the code"
-                },
-                "model": {
-                    "type": "string",
-                    "description": "Specific Ollama model (default: auto-select best coding model)"
-                }
-            },
-            "required": ["task_description"]
-        }
-    },
-    # Sub-Agent Framework Tools (Phase 18)
-    {
-        "name": "delegate_to_subagent",
-        "description": "Delegate a task to a specialized sub-agent. Each agent has different strengths:\n- ollama: Local LLM (free, fast) - for summaries, formatting, simple tasks\n- openai: GPT-4o (vision, reasoning) - for complex analysis, images\n- anthropic: Claude (long context) - for code review, deep analysis\n- perplexity: Web search - for current info, research, fact-checking\nReturns task_id for async tracking or result if sync=true.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "agent_id": {
-                    "type": "string",
-                    "enum": ["ollama", "openai", "anthropic", "perplexity"],
-                    "description": "Sub-agent: ollama (local), openai (GPT-4), anthropic (Claude), perplexity (web search)",
-                    "default": "ollama"
-                },
-                "instructions": {
-                    "type": "string",
-                    "description": "Clear task instructions for the sub-agent"
-                },
-                "input_text": {
-                    "type": "string",
-                    "description": "Input text for the task"
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Additional context"
-                },
-                "tools": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Tools to enable (for ollama/openai/anthropic): read_file, search_kb, calculate, format_json, format_markdown, extract_text, list_files"
-                },
-                "sync": {
-                    "type": "boolean",
-                    "description": "Wait for result (true) or return immediately with task_id (false)",
-                    "default": False
-                }
-            },
-            "required": ["instructions"]
-        }
-    },
+    # MOVED to tool_modules/timer_tools.py (T006 refactor)
+    # MOVED to tool_modules/ollama_tools.py (T006 refactor)
+    # MOVED to tool_modules/subagent_tools.py (T006 refactor)
     {
         "name": "web_search",
         "description": "Search the web for current information using Perplexity. Returns results with source citations. Use for: current events, fact-checking, research, news, looking up recent information. This is a shortcut for delegate_to_subagent with agent_id='perplexity'.",
@@ -817,58 +561,7 @@ TOOL_DEFINITIONS = [
             "required": ["query"]
         }
     },
-    {
-        "name": "get_subagent_result",
-        "description": "Get the result of a delegated sub-agent task. Use after delegate_to_subagent with sync=false.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "Sub-agent task ID"
-                }
-            },
-            "required": ["task_id"]
-        }
-    },
-    {
-        "name": "list_subagents",
-        "description": "List available sub-agents and their capabilities.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    {
-        "name": "execute_python",
-        "description": """Execute Python code YOU write directly in the sandbox.
-
-ALLOWED IMPORTS: math, json, datetime, re, collections, itertools, statistics, csv, hashlib, base64, uuid, time, copy, textwrap
-
-SAFE FILE ACCESS (auto-injected helpers):
-- safe_read_file(path, max_lines=500) - Read files from /brain/system/, /brain/projects/, /brain/notes/
-- safe_list_files(directory, pattern='*') - List files in allowed directories
-
-EXAMPLE:
-  content = safe_read_file('/brain/system/docker/TASKS.md')
-  files = safe_list_files('/brain/system/ingestion/app', '*.py')
-
-FORBIDDEN: direct open(), network, subprocess, exec/eval, os.system""",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string",
-                    "description": "Python code to execute. Must use print() for output. Use safe_read_file() for file access."
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Brief reason why this code is being executed (for audit)"
-                }
-            },
-            "required": ["code", "reason"]
-        }
-    },
+    # execute_python MOVED to tool_modules/sandbox_tools.py (T006 refactor)
     {
         "name": "get_git_events",
         "description": "Query git commits by time range and optional keywords for causal analysis.",
@@ -1766,48 +1459,7 @@ Use this to understand what's currently being worked on and what's planned.""",
             }
         }
     },
-    {
-        "name": "get_ollama_task_status",
-        "description": "Get the status of a queued Ollama task by task_id.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "Ollama task id (e.g. ollama_YYYYMMDD_HHMMSS_xxxxxxxx)"
-                }
-            },
-            "required": ["task_id"]
-        }
-    },
-    {
-        "name": "get_ollama_queue_status",
-        "description": "Get a summary of pending and processing Ollama tasks.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Max tasks to return per queue",
-                    "default": 10
-                }
-            }
-        }
-    },
-    {
-        "name": "cancel_ollama_task",
-        "description": "Cancel a queued Ollama task if it is still pending.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "Ollama task id to cancel"
-                }
-            },
-            "required": ["task_id"]
-        }
-    },
+    # Ollama tools MOVED to tool_modules/ollama_tools.py (T006 refactor)
     {
         "name": "record_decision_outcome",
         "description": "Record outcome/feedback for a Jarvis decision_id (used for learning loop).",
@@ -1850,263 +1502,8 @@ Use this to understand what's currently being worked on and what's planned.""",
             "required": ["decision_id", "outcome"]
         }
     },
-    {
-        "name": "request_python_sandbox",
-        "description": """Request manual approval to run Jarvis-authored Python code in a sandbox. This does NOT execute code; it queues an approval request.""",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string",
-                    "description": "Python code to execute (queued for approval)"
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Reason for execution (audit trail)"
-                },
-                "timeout_seconds": {
-                    "type": "integer",
-                    "description": "Execution timeout in seconds (max 60)",
-                    "default": 30
-                },
-                "metadata": {
-                    "type": "object",
-                    "description": "Optional metadata for audit"
-                }
-            },
-            "required": ["code"]
-        }
-    },
-    # Dynamic Tool Creation (Phase 18+)
-    {
-        "name": "write_dynamic_tool",
-        "description": "Create a new dynamic tool that Jarvis can use. Write Python code that becomes a callable tool. Tools go to sandbox first by default for safety review. Use this to extend your capabilities!",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Tool name in snake_case (e.g., 'my_custom_tool')"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "What the tool does - be clear and concise"
-                },
-                "code": {
-                    "type": "string",
-                    "description": "Python code for the tool handler. Must return a dict. Receives **kwargs."
-                },
-                "parameters": {
-                    "type": "object",
-                    "description": "JSON schema for tool parameters (properties only)"
-                },
-                "category": {
-                    "type": "string",
-                    "description": "Tool category (memory, utility, analysis, custom)",
-                    "default": "custom"
-                },
-                "sandbox": {
-                    "type": "boolean",
-                    "description": "If true (default), tool goes to sandbox first for review",
-                    "default": True
-                }
-            },
-            "required": ["name", "description", "code"]
-        }
-    },
-    {
-        "name": "promote_sandbox_tool",
-        "description": "Promote a tool from sandbox to live production. Use after testing a tool created with write_dynamic_tool.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Name of the sandbox tool to promote"
-                }
-            },
-            "required": ["name"]
-        }
-    },
-    # Learning & Memory Tools
-    {
-        "name": "record_learning",
-        "description": "Record a learning, insight, or pattern for cross-session analysis. Use when you discover something important about the user, workflow, or system.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "fact": {
-                    "type": "string",
-                    "description": "The learning or insight to record"
-                },
-                "category": {
-                    "type": "string",
-                    "description": "Category: general, capability, preference, workflow, technical",
-                    "enum": ["general", "capability", "preference", "workflow", "technical"],
-                    "default": "general"
-                },
-                "confidence": {
-                    "type": "number",
-                    "description": "Confidence level 0.0-1.0",
-                    "default": 0.8
-                },
-                "source": {
-                    "type": "string",
-                    "description": "Source: conversation, observation, feedback",
-                    "default": "conversation"
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Additional context for the learning"
-                }
-            },
-            "required": ["fact"]
-        }
-    },
-    {
-        "name": "get_learnings",
-        "description": "Retrieve recorded learnings and insights. Returns a summary grouped by category. Use to recall what you've learned across sessions.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "category": {
-                    "type": "string",
-                    "description": "Filter by category",
-                    "enum": ["general", "capability", "preference", "workflow", "technical"]
-                },
-                "days_back": {
-                    "type": "integer",
-                    "description": "How many days back to search",
-                    "default": 30
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum results",
-                    "default": 10
-                },
-                "compact": {
-                    "type": "boolean",
-                    "description": "Return compact format with summary (default true)",
-                    "default": True
-                }
-            }
-        }
-    },
-    # Context Persistence Tools
-    {
-        "name": "store_context",
-        "description": "Store a context value for later retrieval. Use for cross-session state, preferences, or temporary memory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "key": {
-                    "type": "string",
-                    "description": "Unique key for this context"
-                },
-                "value": {
-                    "type": "string",
-                    "description": "Value to store (string or JSON)"
-                },
-                "context_type": {
-                    "type": "string",
-                    "description": "Type: general, preference, state, memory",
-                    "enum": ["general", "preference", "state", "memory"],
-                    "default": "general"
-                },
-                "ttl_hours": {
-                    "type": "integer",
-                    "description": "Time to live in hours (default 168 = 1 week)",
-                    "default": 168
-                }
-            },
-            "required": ["key", "value"]
-        }
-    },
-    {
-        "name": "recall_context",
-        "description": "Recall a stored context value. Use to retrieve cross-session state or memory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "key": {
-                    "type": "string",
-                    "description": "Key to recall (if omitted, returns all for context_type)"
-                },
-                "context_type": {
-                    "type": "string",
-                    "description": "Filter by type",
-                    "enum": ["general", "preference", "state", "memory"]
-                }
-            }
-        }
-    },
-    {
-        "name": "forget_context",
-        "description": "Delete stored context. Use to clean up old or invalid context.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "key": {
-                    "type": "string",
-                    "description": "Specific key to delete"
-                },
-                "context_type": {
-                    "type": "string",
-                    "description": "Delete all of this type"
-                }
-            }
-        }
-    },
-    # === Batch Operations (avoid step-limit when doing multiple memory ops) ===
-    {
-        "name": "record_learnings_batch",
-        "description": "Record MULTIPLE learnings in ONE call. Use this instead of calling record_learning multiple times to avoid hitting step limits! Each item needs 'fact' (required), optionally 'category', 'confidence', 'source', 'context'.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "learnings": {
-                    "type": "array",
-                    "description": "Array of learning objects",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "fact": {"type": "string", "description": "The learning/insight to record"},
-                            "category": {"type": "string", "description": "Category: general, technical, preference, workflow, capability"},
-                            "confidence": {"type": "number", "description": "Confidence 0.0-1.0"},
-                            "source": {"type": "string", "description": "Source: conversation, observation, user"},
-                            "context": {"type": "string", "description": "Additional context"}
-                        },
-                        "required": ["fact"]
-                    }
-                }
-            },
-            "required": ["learnings"]
-        }
-    },
-    {
-        "name": "store_contexts_batch",
-        "description": "Store MULTIPLE context values in ONE call. Use this instead of calling store_context multiple times to avoid hitting step limits! Each item needs 'key' and 'value' (required), optionally 'context_type', 'ttl_hours'.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "contexts": {
-                    "type": "array",
-                    "description": "Array of context objects",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "key": {"type": "string", "description": "Unique key for this context"},
-                            "value": {"description": "Value to store (string or object)"},
-                            "context_type": {"type": "string", "description": "Type: general, preference, state, memory"},
-                            "ttl_hours": {"type": "integer", "description": "Time to live in hours (default 168 = 1 week)"}
-                        },
-                        "required": ["key", "value"]
-                    }
-                }
-            },
-            "required": ["contexts"]
-        }
-    },
+    # Sandbox tools MOVED to tool_modules/sandbox_tools.py (T006 refactor)
+    # Learning & Memory tools MOVED to tool_modules/learning_memory_tools.py (T006 refactor)
     # === Tool Autonomy (Phase 19.6) ===
     {
         "name": "manage_tool_registry",
@@ -2278,194 +1675,7 @@ Use this to understand what's currently being worked on and what's planned.""",
             "required": ["prompt"]
         }
     },
-    # Phase 20: Identity Evolution Tools
-    {
-        "name": "get_self_model",
-        "description": "Get Jarvis's current self-model and identity. Returns core traits, strengths, growth areas, values, communication style, relationship memories, and recent learnings. Use for self-reflection.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    {
-        "name": "evolve_identity",
-        "description": "Evolve Jarvis's identity based on significant learnings. Use carefully to update personality traits, values, or self-model. Significant changes require human review.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "evolution_type": {
-                    "type": "string",
-                    "enum": ["trait_update", "value_update", "self_model_update", "relationship_update", "communication_style_update"],
-                    "description": "Type of evolution"
-                },
-                "field": {
-                    "type": "string",
-                    "enum": ["core_traits", "self_model", "values", "communication_style"],
-                    "description": "Which field to update"
-                },
-                "new_value": {
-                    "description": "The new value to set (type depends on field)"
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why this evolution is happening (important for audit)"
-                },
-                "trigger_event": {
-                    "type": "string",
-                    "description": "What triggered this evolution"
-                }
-            },
-            "required": ["evolution_type", "field", "new_value", "reason"]
-        }
-    },
-    {
-        "name": "log_experience",
-        "description": "Log an experience for cross-session learning. Record what worked, what didn't, and lessons learned. Feeds pattern recognition and identity evolution.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "experience_type": {
-                    "type": "string",
-                    "enum": ["success", "failure", "learning", "insight", "correction"],
-                    "description": "Type of experience"
-                },
-                "context": {
-                    "type": "string",
-                    "description": "What was happening"
-                },
-                "action_taken": {
-                    "type": "string",
-                    "description": "What action was taken"
-                },
-                "outcome": {
-                    "type": "string",
-                    "description": "What was the result"
-                },
-                "lesson_learned": {
-                    "type": "string",
-                    "description": "What was learned"
-                },
-                "applies_to": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Categories this applies to ['communication', 'tool_usage', 'timing']"
-                },
-                "confidence": {
-                    "type": "number",
-                    "description": "Confidence in this learning (0-1)",
-                    "default": 0.7
-                }
-            },
-            "required": ["experience_type", "context"]
-        }
-    },
-    {
-        "name": "get_relationship",
-        "description": "Get relationship memory for a user. Returns relationship stage, preferences learned, emotional patterns, trust level, interaction history.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "user_id": {
-                    "type": "integer",
-                    "description": "User ID (default 1 for Micha)",
-                    "default": 1
-                }
-            }
-        }
-    },
-    {
-        "name": "update_relationship",
-        "description": "Update relationship memory. Record learned preferences, recognized patterns, or trust changes.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "user_id": {
-                    "type": "integer",
-                    "description": "User ID (default 1)",
-                    "default": 1
-                },
-                "user_preferences": {
-                    "type": "object",
-                    "description": "Preferences to merge/update"
-                },
-                "emotional_patterns": {
-                    "type": "object",
-                    "description": "Emotional patterns to merge/update"
-                },
-                "trust_level": {
-                    "type": "number",
-                    "description": "New trust level (0-1)"
-                }
-            }
-        }
-    },
-    {
-        "name": "get_learning_patterns",
-        "description": "Get validated learning patterns from cross-session analysis. Returns insights about preferences, timing, communication that have been observed multiple times.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "min_confidence": {
-                    "type": "number",
-                    "description": "Minimum confidence threshold (0-1)",
-                    "default": 0.6
-                }
-            }
-        }
-    },
-    {
-        "name": "record_session_learning",
-        "description": "Record learnings from a completed session. Call at end of meaningful sessions to capture topics, tools used, successes, failures, and explicit learnings.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "session_id": {
-                    "type": "string",
-                    "description": "Unique session identifier"
-                },
-                "topics": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Topics discussed"
-                },
-                "tools_used": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Tools that were used"
-                },
-                "successful_actions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Actions that worked well"
-                },
-                "failed_actions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Actions that failed"
-                },
-                "learnings": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "type": {"type": "string"},
-                            "content": {"type": "string"},
-                            "confidence": {"type": "number"}
-                        }
-                    },
-                    "description": "Explicit learnings"
-                },
-                "user_mood_start": {"type": "string"},
-                "user_mood_end": {"type": "string"},
-                "performance_rating": {
-                    "type": "number",
-                    "description": "Self-rating 0-1"
-                },
-                "improvement_notes": {"type": "string"}
-            },
-            "required": ["session_id", "topics", "tools_used"]
-        }
-    },
+    # Phase 20: Identity Evolution Tools MOVED to tool_modules/identity_tools.py (T006 refactor)
     # Phase 21: Intelligent System Evolution
     # T-21A-01: Smart Tool Chains
     {
@@ -2703,6 +1913,1435 @@ Use this to understand what's currently being worked on and what's planned.""",
                     "type": "integer",
                     "description": "Number of days to analyze",
                     "default": 30
+                }
+            }
+        }
+    },
+    # Phase 22: Emergent Intelligence
+    # T-22A-01: Specialist Agent Registry
+    {
+        "name": "list_specialist_agents",
+        "description": "List registered specialist agents (FitJarvis, WorkJarvis, CommJarvis).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "description": "Filter by domain (fitness, work, communication)"
+                },
+                "active_only": {
+                    "type": "boolean",
+                    "description": "Only show active agents",
+                    "default": True
+                }
+            }
+        }
+    },
+    {
+        "name": "get_specialist_routing",
+        "description": "Route a query to the most appropriate specialist agent based on content analysis.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The query to route"
+                },
+                "context": {
+                    "type": "object",
+                    "description": "Optional context (recent_domain, etc.)"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    # T-22C-01: Pattern Generalization Engine
+    {
+        "name": "generalize_pattern",
+        "description": "Extract domain-agnostic patterns from cause-effect observations for cross-domain learning.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cause": {
+                    "type": "string",
+                    "description": "The cause event"
+                },
+                "effect": {
+                    "type": "string",
+                    "description": "The effect event"
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "Source domain (fitness, work, communication)"
+                }
+            },
+            "required": ["cause", "effect", "domain"]
+        }
+    },
+    {
+        "name": "find_transfer_candidates",
+        "description": "Find patterns that could be transferred to a new domain.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target_domain": {
+                    "type": "string",
+                    "description": "Domain to find transfer candidates for"
+                },
+                "min_confidence": {
+                    "type": "number",
+                    "description": "Minimum confidence threshold",
+                    "default": 0.6
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of candidates",
+                    "default": 10
+                }
+            },
+            "required": ["target_domain"]
+        }
+    },
+    {
+        "name": "get_cross_domain_insights",
+        "description": "Get insights about cross-domain pattern learning and knowledge transfer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_pattern_generalization_stats",
+        "description": "Get statistics about pattern generalization and cross-domain transfers.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    # ============ Phase 22A-02: Agent Registry & Lifecycle ============
+    {
+        "name": "register_agent",
+        "description": "Register a new specialist agent in the registry. Creates or updates an agent with specified domain, tools, and configuration.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Unique identifier (e.g., 'fit_jarvis', 'work_jarvis')"
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "Primary domain (e.g., 'fitness', 'work', 'communication')"
+                },
+                "display_name": {
+                    "type": "string",
+                    "description": "Human-readable name (e.g., 'FitJarvis')"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of tool names this agent can use"
+                },
+                "identity_extension": {
+                    "type": "object",
+                    "description": "Persona/style configuration (expertise, tone, traits)"
+                },
+                "confidence_threshold": {
+                    "type": "number",
+                    "description": "Minimum confidence for activation (0.0-1.0)"
+                },
+                "dependencies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Other agent_ids this agent depends on"
+                }
+            },
+            "required": ["agent_id", "domain"]
+        }
+    },
+    {
+        "name": "deregister_agent",
+        "description": "Remove an agent from the registry. Fails if other agents depend on it unless force=true.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent to remove"
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "Remove even if other agents depend on it"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "start_agent",
+        "description": "Start a registered agent. Automatically starts dependencies first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent to start"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "stop_agent",
+        "description": "Stop an active agent. Fails if other agents depend on it unless stop_dependents=true.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent to stop"
+                },
+                "stop_dependents": {
+                    "type": "boolean",
+                    "description": "Also stop agents that depend on this one"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "pause_agent",
+        "description": "Pause an active agent (won't receive new requests but can be resumed quickly).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent to pause"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "resume_agent",
+        "description": "Resume a paused agent.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent to resume"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "reset_agent",
+        "description": "Reset an agent from error state (clears error count, restarts).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent to reset"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "agent_health_check",
+        "description": "Run health check on one or all agents. Returns state, error count, dependencies status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Specific agent to check (omit for all agents)"
+                }
+            }
+        }
+    },
+    {
+        "name": "update_agent_config",
+        "description": "Update agent configuration at runtime (tools, identity, confidence threshold).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent to update"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "New tool list"
+                },
+                "identity_extension": {
+                    "type": "object",
+                    "description": "New persona/style configuration"
+                },
+                "confidence_threshold": {
+                    "type": "number",
+                    "description": "New confidence threshold"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "get_agent_registry_stats",
+        "description": "Get overall registry statistics (agents by state, domain, total activations).",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    # ============ Phase 22A-03: Agent Context Isolation ============
+    {
+        "name": "create_agent_context",
+        "description": "Create an isolated execution context for a specialist agent. Defines tool access, memory namespace, and session boundaries.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The specialist agent ID (e.g., 'fit_jarvis')"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Current session/conversation ID"
+                },
+                "allowed_tools": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Whitelist of tools this agent can use"
+                },
+                "blocked_tools": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Blacklist of tools to block"
+                },
+                "ttl_minutes": {
+                    "type": "integer",
+                    "description": "Context lifetime in minutes (default: 60)"
+                }
+            },
+            "required": ["agent_id", "session_id"]
+        }
+    },
+    {
+        "name": "get_agent_context",
+        "description": "Get the current isolated context for an agent session.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The specialist agent ID"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID"
+                }
+            },
+            "required": ["agent_id", "session_id"]
+        }
+    },
+    {
+        "name": "store_agent_memory",
+        "description": "Store a memory in the agent's isolated namespace. Memories are private by default.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The specialist agent ID"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Memory key/identifier"
+                },
+                "value": {
+                    "type": "object",
+                    "description": "Memory value (any JSON)"
+                },
+                "memory_type": {
+                    "type": "string",
+                    "description": "Type: fact, preference, goal, observation"
+                },
+                "sharing_policy": {
+                    "type": "string",
+                    "enum": ["private", "domain", "cross", "public"],
+                    "description": "Who can access this memory"
+                }
+            },
+            "required": ["agent_id", "key", "value"]
+        }
+    },
+    {
+        "name": "recall_agent_memory",
+        "description": "Recall memories from the agent's isolated namespace.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The specialist agent ID"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Specific memory key (optional)"
+                },
+                "memory_type": {
+                    "type": "string",
+                    "description": "Filter by type"
+                },
+                "include_shared": {
+                    "type": "boolean",
+                    "description": "Include memories shared by other agents"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "set_agent_boundary",
+        "description": "Set a data sharing boundary between two agents. Controls what data can be shared.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_agent": {
+                    "type": "string",
+                    "description": "Agent sharing the data"
+                },
+                "target_agent": {
+                    "type": "string",
+                    "description": "Agent receiving access"
+                },
+                "data_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Types of data that can be shared"
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["read", "write", "both"],
+                    "description": "Access direction"
+                }
+            },
+            "required": ["source_agent", "target_agent"]
+        }
+    },
+    {
+        "name": "get_agent_boundaries",
+        "description": "Get all data sharing boundaries for an agent.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Agent to check boundaries for"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "check_tool_access",
+        "description": "Check if an agent is allowed to use a specific tool in current context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The specialist agent ID"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID"
+                },
+                "tool_name": {
+                    "type": "string",
+                    "description": "Tool to check access for"
+                }
+            },
+            "required": ["agent_id", "session_id", "tool_name"]
+        }
+    },
+    {
+        "name": "get_isolation_stats",
+        "description": "Get statistics about agent context isolation (contexts, memories, boundaries).",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    # ============ Phase 22A-04: FitJarvis (Fitness Agent) ============
+    {
+        "name": "log_workout",
+        "description": "Log a workout session. Tracks type, duration, intensity, calories, and optionally strength training details.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "workout_type": {
+                    "type": "string",
+                    "enum": ["strength", "cardio", "hiit", "yoga", "stretching", "sports"],
+                    "description": "Type of workout"
+                },
+                "activity": {
+                    "type": "string",
+                    "description": "Specific activity (e.g., 'running', 'bench press', 'swimming')"
+                },
+                "duration_minutes": {
+                    "type": "integer",
+                    "description": "Duration in minutes"
+                },
+                "intensity": {
+                    "type": "string",
+                    "enum": ["low", "moderate", "high", "max"],
+                    "description": "Workout intensity"
+                },
+                "calories_burned": {
+                    "type": "integer",
+                    "description": "Calories burned (auto-estimated if not provided)"
+                },
+                "distance_km": {
+                    "type": "number",
+                    "description": "Distance for cardio workouts"
+                },
+                "sets_reps": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Strength training details: [{exercise, sets, reps, weight_kg}]"
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Additional notes"
+                },
+                "mood_before": {
+                    "type": "string",
+                    "description": "Mood before workout"
+                },
+                "mood_after": {
+                    "type": "string",
+                    "description": "Mood after workout"
+                },
+                "energy_level": {
+                    "type": "integer",
+                    "description": "Energy level 1-10"
+                }
+            },
+            "required": ["workout_type", "activity"]
+        }
+    },
+    {
+        "name": "get_fitness_trends",
+        "description": "Get fitness trends and analytics over a period. Shows workout stats, calories, nutrition, and body metrics.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string",
+                    "enum": ["week", "month", "quarter", "year"],
+                    "description": "Time period for trends"
+                },
+                "trend_type": {
+                    "type": "string",
+                    "enum": ["workouts", "calories", "nutrition", "weight", "all"],
+                    "description": "Type of trends to show"
+                }
+            }
+        }
+    },
+    {
+        "name": "track_nutrition",
+        "description": "Track a meal with food items and macros. Calculates totals and shows daily progress.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "meal_type": {
+                    "type": "string",
+                    "enum": ["breakfast", "lunch", "dinner", "snack"],
+                    "description": "Type of meal"
+                },
+                "food_items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "calories": {"type": "integer"},
+                            "protein_g": {"type": "number"},
+                            "carbs_g": {"type": "number"},
+                            "fat_g": {"type": "number"}
+                        }
+                    },
+                    "description": "List of food items with nutritional info"
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Additional notes"
+                }
+            },
+            "required": ["meal_type", "food_items"]
+        }
+    },
+    {
+        "name": "suggest_exercise",
+        "description": "Get personalized exercise suggestions based on criteria and recent workout history.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "enum": ["strength", "cardio", "flexibility", "balance"],
+                    "description": "Exercise category"
+                },
+                "muscle_groups": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Target muscle groups (e.g., ['chest', 'triceps'])"
+                },
+                "difficulty": {
+                    "type": "string",
+                    "enum": ["beginner", "intermediate", "advanced"],
+                    "description": "Difficulty level"
+                },
+                "equipment": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Available equipment"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of suggestions (default: 5)"
+                }
+            }
+        }
+    },
+    {
+        "name": "get_fitness_stats",
+        "description": "Get overall fitness statistics including total workouts, calories, streak, and active goals.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    # ============ Phase 22A-05: WorkJarvis (Work Agent) ============
+    {
+        "name": "prioritize_tasks",
+        "description": "Prioritize tasks using Eisenhower matrix. Returns DO/SCHEDULE/DELEGATE/ELIMINATE quadrants.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "importance": {"type": "integer", "description": "1-100"},
+                            "urgency": {"type": "integer", "description": "1-100"},
+                            "estimated_minutes": {"type": "integer"},
+                            "due_date": {"type": "string"},
+                            "energy_required": {"type": "string", "enum": ["low", "medium", "high"]}
+                        }
+                    },
+                    "description": "Tasks to add/update before prioritizing"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Current context (home, office, calls, etc.)"
+                },
+                "available_minutes": {
+                    "type": "integer",
+                    "description": "Time available for work"
+                },
+                "energy_level": {
+                    "type": "integer",
+                    "description": "Current energy 1-10"
+                }
+            }
+        }
+    },
+    {
+        "name": "estimate_effort",
+        "description": "Estimate effort for a task with learning from past estimates. Returns calibrated estimate with confidence.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_description": {
+                    "type": "string",
+                    "description": "What needs to be done"
+                },
+                "task_type": {
+                    "type": "string",
+                    "enum": ["coding", "writing", "review", "meeting", "admin", "general"],
+                    "description": "Type of task"
+                },
+                "complexity": {
+                    "type": "string",
+                    "enum": ["simple", "moderate", "complex", "unknown"],
+                    "description": "Task complexity"
+                }
+            },
+            "required": ["task_description"]
+        }
+    },
+    {
+        "name": "track_focus_time",
+        "description": "Track focus sessions (Pomodoro-style). Start, end, or check status of focus sessions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["start", "end", "status"],
+                    "description": "Action to perform"
+                },
+                "task_title": {
+                    "type": "string",
+                    "description": "What you're working on (for start)"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name"
+                },
+                "planned_minutes": {
+                    "type": "integer",
+                    "description": "How long you plan to focus (default: 25)"
+                },
+                "category": {
+                    "type": "string",
+                    "enum": ["deep_work", "meetings", "admin", "creative", "learning"],
+                    "description": "Session category"
+                },
+                "focus_quality": {
+                    "type": "integer",
+                    "description": "1-10 self-assessment (for end)"
+                }
+            }
+        }
+    },
+    {
+        "name": "suggest_breaks",
+        "description": "Get break suggestions based on focus time and energy patterns.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "current_focus_minutes": {
+                    "type": "integer",
+                    "description": "How long you've been focusing"
+                },
+                "energy_level": {
+                    "type": "integer",
+                    "description": "Current energy 1-10"
+                },
+                "last_break_minutes_ago": {
+                    "type": "integer",
+                    "description": "Minutes since last break"
+                }
+            }
+        }
+    },
+    {
+        "name": "get_work_stats",
+        "description": "Get work/productivity statistics for today, week, or month.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string",
+                    "enum": ["today", "week", "month"],
+                    "description": "Time period"
+                }
+            }
+        }
+    },
+    # ============ Phase 22A-06: CommJarvis (Communication Agent) ============
+    {
+        "name": "triage_inbox",
+        "description": "Triage inbox messages by priority. Categorizes as urgent/important/fyi and suggests actions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "messages": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "New messages to triage [{source, sender_name, sender_email, subject, preview}]"
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Filter by source (gmail, telegram, etc.)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max items to return"
+                }
+            }
+        }
+    },
+    {
+        "name": "draft_response",
+        "description": "Draft a response with relationship context. Uses past interactions to personalize.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "Recipient name or email"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "What to respond about"
+                },
+                "tone": {
+                    "type": "string",
+                    "enum": ["formal", "friendly", "brief", "detailed"],
+                    "description": "Response tone"
+                }
+            },
+            "required": ["to", "context"]
+        }
+    },
+    {
+        "name": "track_relationship",
+        "description": "Track and manage relationships. Add, update, get, list, or search contacts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["add", "update", "get", "list", "search"],
+                    "description": "Action to perform"
+                },
+                "contact_name": {
+                    "type": "string",
+                    "description": "Contact's name"
+                },
+                "contact_email": {
+                    "type": "string",
+                    "description": "Contact's email"
+                },
+                "relationship_type": {
+                    "type": "string",
+                    "enum": ["friend", "family", "colleague", "client", "mentor", "acquaintance"],
+                    "description": "Type of relationship"
+                },
+                "company": {
+                    "type": "string",
+                    "description": "Company name"
+                },
+                "importance": {
+                    "type": "integer",
+                    "description": "Importance 1-100"
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Notes about relationship"
+                }
+            }
+        }
+    },
+    {
+        "name": "schedule_followup",
+        "description": "Schedule a followup with a contact. Sets reminder for check-in, thank you, etc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_name": {
+                    "type": "string",
+                    "description": "Who to follow up with"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why following up"
+                },
+                "due_date": {
+                    "type": "string",
+                    "description": "When (YYYY-MM-DD)"
+                },
+                "followup_type": {
+                    "type": "string",
+                    "enum": ["check_in", "thank_you", "request", "reminder", "birthday"],
+                    "description": "Type of followup"
+                },
+                "channel": {
+                    "type": "string",
+                    "enum": ["email", "call", "message"],
+                    "description": "How to follow up"
+                }
+            },
+            "required": ["contact_name", "reason", "due_date"]
+        }
+    },
+    {
+        "name": "get_comm_stats",
+        "description": "Get communication statistics - interactions, inbox, relationships, pending followups.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string",
+                    "enum": ["today", "week", "month"],
+                    "description": "Time period"
+                }
+            }
+        }
+    },
+    # Phase 22A-07: Intent-Based Agent Routing
+    {
+        "name": "route_query",
+        "description": "Route a query to the appropriate specialist agent based on intent classification. Returns routing decision with strategy, agent assignment, and confidence.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "User query to route"
+                },
+                "context": {
+                    "type": "object",
+                    "description": "Optional context (session_id, time_of_day, recent_agent)"
+                },
+                "force_agent": {
+                    "type": "string",
+                    "description": "Force routing to specific agent (fit_jarvis, work_jarvis, comm_jarvis, jarvis_core)"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "classify_intent",
+        "description": "Classify a query's intent and get confidence scores for each domain (fitness, work, communication, general).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Query to classify"
+                },
+                "context": {
+                    "type": "object",
+                    "description": "Optional context for classification"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "test_routing",
+        "description": "Test routing for multiple queries (for debugging). Returns routing decisions for each query.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "queries": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of queries to test"
+                }
+            },
+            "required": ["queries"]
+        }
+    },
+    {
+        "name": "get_routing_stats",
+        "description": "Get routing statistics - strategies used, agents routed to, average confidence.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to analyze (default: 7)"
+                }
+            }
+        }
+    },
+    # Phase 22A-08: Multi-Agent Collaboration
+    {
+        "name": "execute_collaboration",
+        "description": "Execute a multi-agent collaboration where multiple specialists work together on a query. Use for complex tasks spanning multiple domains.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Query for agents to collaborate on"
+                },
+                "agents": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of agent names (fit_jarvis, work_jarvis, comm_jarvis)"
+                },
+                "collaboration_type": {
+                    "type": "string",
+                    "enum": ["parallel", "sequential", "primary_secondary"],
+                    "description": "How agents should collaborate"
+                },
+                "context": {
+                    "type": "object",
+                    "description": "Optional shared context"
+                }
+            },
+            "required": ["query", "agents"]
+        }
+    },
+    {
+        "name": "get_collaboration_stats",
+        "description": "Get statistics on multi-agent collaborations - types, success rates, timing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to analyze (default: 7)"
+                }
+            }
+        }
+    },
+    # Phase 22A-09: Agent Delegation Protocol
+    {
+        "name": "delegate_task",
+        "description": "Delegate a complex task to specialist agents. Jarvis decomposes the task into subtasks and delegates each to the appropriate specialist.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Complex query to delegate"
+                },
+                "context": {
+                    "type": "object",
+                    "description": "Optional context for delegation"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "get_delegation_status",
+        "description": "Get status of a delegation session including all subtask results.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "integer",
+                    "description": "Delegation session ID"
+                }
+            },
+            "required": ["session_id"]
+        }
+    },
+    {
+        "name": "get_delegation_stats",
+        "description": "Get delegation statistics - sessions, subtasks, agent usage.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to analyze (default: 7)"
+                }
+            }
+        }
+    },
+    # Phase 22B-02: Message Queue System
+    {
+        "name": "enqueue_message",
+        "description": "Add a message to an agent's queue for async processing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "queue_name": {
+                    "type": "string",
+                    "description": "Target queue (agent name)"
+                },
+                "payload": {
+                    "type": "object",
+                    "description": "Message content"
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["urgent", "high", "normal", "low", "batch"],
+                    "description": "Message priority"
+                },
+                "delay_seconds": {
+                    "type": "integer",
+                    "description": "Delay before processing"
+                }
+            },
+            "required": ["queue_name", "payload"]
+        }
+    },
+    {
+        "name": "dequeue_message",
+        "description": "Get messages from a queue for processing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "queue_name": {
+                    "type": "string",
+                    "description": "Queue to read from"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max messages to fetch"
+                }
+            },
+            "required": ["queue_name"]
+        }
+    },
+    {
+        "name": "get_queue_stats",
+        "description": "Get message queue statistics.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "queue_name": {
+                    "type": "string",
+                    "description": "Queue name (optional, all queues if omitted)"
+                }
+            }
+        }
+    },
+    # Phase 22B-03: Request/Response Patterns
+    {
+        "name": "agent_request",
+        "description": "Make a synchronous request to another agent and wait for response.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "from_agent": {
+                    "type": "string",
+                    "description": "Requesting agent"
+                },
+                "to_agent": {
+                    "type": "string",
+                    "description": "Target agent"
+                },
+                "method": {
+                    "type": "string",
+                    "description": "Method to call"
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Method parameters"
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Timeout in milliseconds"
+                }
+            },
+            "required": ["from_agent", "to_agent", "method"]
+        }
+    },
+    {
+        "name": "scatter_gather",
+        "description": "Send request to multiple agents and gather all responses.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "from_agent": {
+                    "type": "string",
+                    "description": "Requesting agent"
+                },
+                "to_agents": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of target agents"
+                },
+                "method": {
+                    "type": "string",
+                    "description": "Method to call"
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Shared parameters"
+                }
+            },
+            "required": ["from_agent", "to_agents", "method"]
+        }
+    },
+    {
+        "name": "get_circuit_status",
+        "description": "Get circuit breaker status for agents.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string",
+                    "description": "Agent name (optional, all if omitted)"
+                }
+            }
+        }
+    },
+    # Phase 22B-07/08/09: Coordination Protocols
+    {
+        "name": "propose_agent_negotiation",
+        "description": "Create a coordination negotiation for a task across candidate agents using claim, capability, auction, or hierarchical strategy.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short title for the negotiation"},
+                "initiator_agent": {"type": "string", "description": "Agent starting the negotiation"},
+                "candidate_agents": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Candidate agents for this task"
+                },
+                "strategy": {
+                    "type": "string",
+                    "enum": ["claim_based", "capability_based", "auction_based", "hierarchical"],
+                    "description": "Negotiation strategy"
+                },
+                "original_query": {"type": "string", "description": "Optional source query"},
+                "context": {"type": "object", "description": "Optional negotiation context"}
+            },
+            "required": ["title", "initiator_agent", "candidate_agents"]
+        }
+    },
+    {
+        "name": "claim_agent_task",
+        "description": "Submit a claim for an agent to handle a negotiated task, optionally with a capability score.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "negotiation_id": {"type": "string", "description": "Negotiation ID"},
+                "agent_name": {"type": "string", "description": "Claiming agent"},
+                "capability_score": {"type": "number", "description": "Optional capability score"},
+                "rationale": {"type": "string", "description": "Optional rationale"},
+                "metadata": {"type": "object", "description": "Optional metadata"}
+            },
+            "required": ["negotiation_id", "agent_name"]
+        }
+    },
+    {
+        "name": "submit_agent_bid",
+        "description": "Submit an auction bid score for an agent negotiation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "negotiation_id": {"type": "string", "description": "Negotiation ID"},
+                "agent_name": {"type": "string", "description": "Bidding agent"},
+                "bid_score": {"type": "number", "description": "Bid score"},
+                "rationale": {"type": "string", "description": "Optional rationale"},
+                "metadata": {"type": "object", "description": "Optional metadata"}
+            },
+            "required": ["negotiation_id", "agent_name", "bid_score"]
+        }
+    },
+    {
+        "name": "resolve_agent_conflict",
+        "description": "Resolve a contested negotiation via core arbitration or explicit preferred agent selection.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "negotiation_id": {"type": "string", "description": "Negotiation ID"},
+                "arbitrator_agent": {"type": "string", "description": "Arbitrating agent"},
+                "preferred_agent": {"type": "string", "description": "Optional selected winner"},
+                "resolution_note": {"type": "string", "description": "Optional note"}
+            },
+            "required": ["negotiation_id"]
+        }
+    },
+    {
+        "name": "record_consensus_vote",
+        "description": "Record an approve/reject/abstain vote toward consensus on a negotiation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "negotiation_id": {"type": "string", "description": "Negotiation ID"},
+                "agent_name": {"type": "string", "description": "Voting agent"},
+                "vote_value": {
+                    "type": "string",
+                    "enum": ["approve", "reject", "abstain"],
+                    "description": "Vote value"
+                },
+                "rationale": {"type": "string", "description": "Optional rationale"}
+            },
+            "required": ["negotiation_id", "agent_name", "vote_value"]
+        }
+    },
+    {
+        "name": "get_coordination_status",
+        "description": "Get negotiation status including claims, bids, votes, and current resolution state.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "negotiation_id": {"type": "string", "description": "Negotiation ID"}
+            },
+            "required": ["negotiation_id"]
+        }
+    },
+    {
+        "name": "get_coordination_stats",
+        "description": "Get aggregate stats for negotiation, conflict resolution, and consensus activity.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "Number of days to analyze (default: 7)"}
+            }
+        }
+    },
+    # Phase 22B-04/05/06: Shared Context + Subscriptions + Privacy Boundaries
+    {
+        "name": "publish_agent_context",
+        "description": "Publish context to the cross-agent shared context pool.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_agent": {
+                    "type": "string",
+                    "description": "Publishing agent"
+                },
+                "context_key": {
+                    "type": "string",
+                    "description": "Context key"
+                },
+                "context_value": {
+                    "type": "object",
+                    "description": "Context payload"
+                },
+                "visibility": {
+                    "type": "string",
+                    "enum": ["global", "domain", "private", "temporary"],
+                    "description": "Visibility level"
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "Domain hint (optional)"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional tags"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session scope for temporary context"
+                },
+                "ttl_minutes": {
+                    "type": "integer",
+                    "description": "Optional time-to-live in minutes"
+                }
+            },
+            "required": ["source_agent", "context_key", "context_value"]
+        }
+    },
+    {
+        "name": "subscribe_agent_context",
+        "description": "Create or update an agent context subscription profile.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Subscriber agent"
+                },
+                "visibility_levels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Allowed visibility levels"
+                },
+                "domains": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Domain filters"
+                },
+                "source_agents": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Source-agent filters"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tag filters"
+                },
+                "include_temporary": {
+                    "type": "boolean",
+                    "description": "Whether temporary context should be included"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "read_agent_context",
+        "description": "Read shared context visible to an agent based on subscriptions and privacy boundaries.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Reader agent"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID (for temporary visibility)"
+                },
+                "since_minutes": {
+                    "type": "integer",
+                    "description": "How far back to read"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum entries"
+                }
+            },
+            "required": ["agent_id"]
+        }
+    },
+    {
+        "name": "set_context_privacy_boundary",
+        "description": "Set explicit source->target privacy boundaries for context sharing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_agent": {
+                    "type": "string",
+                    "description": "Source agent"
+                },
+                "target_agent": {
+                    "type": "string",
+                    "description": "Target agent"
+                },
+                "allowed_levels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Allowed visibility levels"
+                },
+                "allowed_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional key allowlist"
+                },
+                "denied_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional key denylist"
+                },
+                "active": {
+                    "type": "boolean",
+                    "description": "Whether boundary is active"
+                }
+            },
+            "required": ["source_agent", "target_agent"]
+        }
+    },
+    {
+        "name": "get_context_pool_stats",
+        "description": "Get context pool/subscription/privacy statistics.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to analyze (default: 7)"
                 }
             }
         }
@@ -5548,624 +6187,32 @@ def tool_get_git_events(**kwargs) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def tool_delegate_ollama_task(**kwargs) -> Dict[str, Any]:
-    """Queue a task for local Ollama execution."""
-    try:
-        from . import ollama_delegation
+# Ollama tools MOVED to tool_modules/ollama_tools.py (T006 refactor)
+# Implementations: tool_delegate_ollama_task, tool_get_ollama_task_status, tool_get_ollama_queue_status,
+#                  tool_cancel_ollama_task, tool_get_ollama_callback_result, tool_ask_ollama, tool_ollama_python
 
-        task_type = kwargs.get("task_type")
-        instructions = kwargs.get("instructions")
-        input_text = kwargs.get("input_text")
-        input_path = kwargs.get("input_path")
-        output_path = kwargs.get("output_path")
-        model = kwargs.get("model")
-        max_tokens = kwargs.get("max_tokens", 1000)
-        temperature = kwargs.get("temperature", 0.3)
-        language = kwargs.get("language", "de")
-        output_format = kwargs.get("output_format", "text")
-        callback_url = kwargs.get("callback_url")
+def _tool_ollama_unavailable(**kwargs) -> Dict[str, Any]:
+    return {"error": "ollama tools unavailable"}
 
-        log_with_context(
-            logger,
-            "info",
-            "Delegating task to Ollama",
-            task_type=task_type,
-            model=model,
-        )
 
-        task = ollama_delegation.create_task(
-            task_type=ollama_delegation.TaskType(task_type),
-            instructions=instructions,
-            input_text=input_text,
-            input_path=input_path,
-            output_path=output_path,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            language=language,
-            output_format=output_format,
-            callback_url=callback_url,
-        )
+tool_delegate_ollama_task = _tool_ollama_unavailable
+tool_get_ollama_task_status = _tool_ollama_unavailable
+tool_get_ollama_queue_status = _tool_ollama_unavailable
+tool_cancel_ollama_task = _tool_ollama_unavailable
+tool_get_ollama_callback_result = _tool_ollama_unavailable
+tool_ask_ollama = _tool_ollama_unavailable
+tool_ollama_python = _tool_ollama_unavailable
 
-        metrics.inc("tool_delegate_ollama_task")
-        return {
-            "status": "queued",
-            "task_id": task.task_id,
-            "task_type": task.task_type.value,
-            "model": task.model,
-        }
-    except Exception as e:
-        log_with_context(logger, "warning", "Ollama delegation failed", error=str(e))
-        return {"error": str(e)}
+# Timer tools MOVED to tool_modules/timer_tools.py (T006 refactor)
+# Implementations: tool_set_timer, tool_cancel_timer, tool_list_timers
 
 
-def tool_get_ollama_task_status(**kwargs) -> Dict[str, Any]:
-    """Return status for a queued Ollama task."""
-    try:
-        from . import ollama_delegation
+# Sandbox tools MOVED to tool_modules/sandbox_tools.py (T006 refactor)
+# Implementations: tool_request_python_sandbox, tool_execute_python
 
-        task_id = kwargs.get("task_id")
-        status = ollama_delegation.get_task_status(task_id)
-        metrics.inc("tool_get_ollama_task_status")
-        if not status:
-            return {"error": "task_not_found"}
-        return status
-    except Exception as e:
-        log_with_context(logger, "warning", "Ollama status failed", error=str(e))
-        return {"error": str(e)}
 
-
-def tool_get_ollama_queue_status(**kwargs) -> Dict[str, Any]:
-    """Return a summary of pending and processing Ollama tasks."""
-    try:
-        from .ollama_delegation import QUEUE_PENDING, QUEUE_PROCESSING
-
-        limit = kwargs.get("limit", 10)
-        try:
-            limit = int(limit)
-        except (TypeError, ValueError):
-            limit = 10
-        limit = max(1, min(limit, 50))
-
-        pending_files = sorted(QUEUE_PENDING.glob("*.json"), key=lambda p: p.stat().st_mtime)
-        processing_files = sorted(QUEUE_PROCESSING.glob("*.json"), key=lambda p: p.stat().st_mtime)
-
-        pending_tasks = []
-        for p in pending_files[:limit]:
-            try:
-                with open(p) as f:
-                    data = json.load(f)
-                pending_tasks.append({
-                    "task_id": data.get("task_id"),
-                    "task_type": data.get("task_type"),
-                    "created_at": data.get("created_at"),
-                })
-            except Exception:
-                continue
-
-        processing_tasks = []
-        for p in processing_files[:limit]:
-            try:
-                with open(p) as f:
-                    data = json.load(f)
-                processing_tasks.append({
-                    "task_id": data.get("task_id"),
-                    "task_type": data.get("task_type"),
-                    "started_at": data.get("started_at"),
-                })
-            except Exception:
-                continue
-
-        metrics.inc("tool_get_ollama_queue_status")
-        return {
-            "pending_count": len(pending_files),
-            "processing_count": len(processing_files),
-            "pending_tasks": pending_tasks,
-            "processing_tasks": processing_tasks,
-        }
-    except Exception as e:
-        log_with_context(logger, "warning", "Ollama queue status failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_cancel_ollama_task(**kwargs) -> Dict[str, Any]:
-    """Cancel an Ollama task if it is still pending."""
-    try:
-        from .ollama_delegation import QUEUE_PENDING, OllamaTask, TaskStatus
-
-        task_id = kwargs.get("task_id")
-        if not task_id:
-            return {"error": "task_id is required"}
-
-        task = OllamaTask.load(task_id)
-        if not task:
-            return {"error": "task_not_found", "task_id": task_id}
-
-        if task.status != TaskStatus.PENDING:
-            return {
-                "status": "not_cancelable",
-                "task_id": task_id,
-                "current_status": task.status.value,
-            }
-
-        pending_path = QUEUE_PENDING / f"{task_id}.json"
-        if pending_path.exists():
-            pending_path.unlink()
-            metrics.inc("tool_cancel_ollama_task")
-            return {"status": "canceled", "task_id": task_id}
-
-        return {"status": "not_found", "task_id": task_id}
-    except Exception as e:
-        log_with_context(logger, "warning", "Ollama cancel failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_get_ollama_callback_result(**kwargs) -> Dict[str, Any]:
-    """Get result of a completed async Ollama task."""
-    try:
-        from .routers.ollama_callback_router import CALLBACK_HISTORY, CALLBACK_STORE
-        import json
-
-        task_id = kwargs.get("task_id")
-        recent_only = kwargs.get("recent_only", False)
-        limit = kwargs.get("limit", 10)
-
-        if task_id:
-            # Look for specific task
-            for cb in CALLBACK_HISTORY:
-                if cb["task_id"] == task_id:
-                    metrics.inc("tool_get_ollama_callback_result")
-                    return {"found": True, "callback": cb, "source": "memory"}
-
-            # Check file store
-            callback_file = CALLBACK_STORE / f"{task_id}.json"
-            if callback_file.exists():
-                with open(callback_file) as f:
-                    metrics.inc("tool_get_ollama_callback_result")
-                    return {"found": True, "callback": json.load(f), "source": "file"}
-
-            return {"found": False, "task_id": task_id}
-
-        elif recent_only:
-            # Return recent callbacks
-            metrics.inc("tool_get_ollama_callback_result")
-            return {
-                "recent_callbacks": CALLBACK_HISTORY[:limit],
-                "count": len(CALLBACK_HISTORY[:limit])
-            }
-
-        return {"error": "Provide task_id or set recent_only=true"}
-
-    except Exception as e:
-        log_with_context(logger, "warning", "Get callback result failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_ask_ollama(**kwargs) -> Dict[str, Any]:
-    """
-    Ask Ollama a question and get an answer.
-    Jarvis's free local sub-assistant for simple tasks.
-    """
-    try:
-        from . import ollama_python_bridge
-
-        prompt = kwargs.get("prompt")
-        if not prompt:
-            return {"error": "prompt is required"}
-
-        task_type = kwargs.get("task_type", "analyze")
-        system_prompt = kwargs.get("system_prompt")
-        max_tokens = kwargs.get("max_tokens")
-
-        result = ollama_python_bridge.ask_ollama(
-            prompt=prompt,
-            task_type=task_type,
-            system_prompt=system_prompt,
-            max_tokens=max_tokens,
-        )
-
-        metrics.inc("tool_ask_ollama")
-
-        if result.status == "success":
-            return {
-                "status": "success",
-                "answer": result.answer,
-                "model_used": result.model_used,
-                "duration_ms": round(result.duration_ms, 1),
-                "tokens": {
-                    "prompt": result.prompt_tokens,
-                    "response": result.response_tokens,
-                }
-            }
-        else:
-            return {
-                "status": result.status,
-                "error": result.error,
-                "model_used": result.model_used,
-                "duration_ms": round(result.duration_ms, 1),
-            }
-
-    except Exception as e:
-        log_with_context(logger, "error", "ask_ollama failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_ollama_python(**kwargs) -> Dict[str, Any]:
-    """
-    Generate and execute Python code via local Ollama.
-    Saves API tokens by using local LLM for code generation.
-    """
-    try:
-        from . import ollama_python_bridge
-
-        task_description = kwargs.get("task_description")
-        context = kwargs.get("context")
-        model = kwargs.get("model")
-
-        if not task_description:
-            return {"error": "task_description is required"}
-
-        result = ollama_python_bridge.generate_and_execute_python(
-            task_description=task_description,
-            context=context,
-            model=model,
-            user_id="jarvis_agent",
-        )
-
-        metrics.inc("tool_ollama_python")
-
-        # Build response
-        response = {
-            "status": result.status,
-            "model_used": result.model_used,
-            "generation_time_ms": round(result.generation_time_ms, 2),
-            "total_time_ms": round(result.total_time_ms, 2),
-        }
-
-        if result.generated_code:
-            response["generated_code"] = result.generated_code
-
-        if result.validation_error:
-            response["validation_error"] = result.validation_error
-
-        if result.exec_result:
-            response["output"] = result.exec_result.get("stdout", "")
-            if result.exec_result.get("stderr"):
-                response["stderr"] = result.exec_result["stderr"]
-            response["exec_id"] = result.exec_result.get("exec_id")
-
-        return response
-
-    except Exception as e:
-        log_with_context(logger, "warning", "Ollama Python failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_set_timer(**kwargs) -> Dict[str, Any]:
-    """
-    Create a reminder timer (scheduled via n8n, stored in Redis).
-    """
-    try:
-        from .timer_service import create_timer
-        from .tracing import get_current_user_id
-
-        message = kwargs.get("message")
-        delay_seconds = kwargs.get("delay_seconds")
-        delay_minutes = kwargs.get("delay_minutes")
-        due_at = kwargs.get("due_at")
-        confirm = bool(kwargs.get("confirm", False))
-
-        if message is None or not str(message).strip():
-            return {"error": "message is required"}
-
-        if delay_seconds is None and delay_minutes is not None:
-            delay_seconds = int(float(delay_minutes) * 60)
-
-        user_id = kwargs.get("user_id") or str(get_current_user_id() or "jarvis_agent")
-
-        result = create_timer(
-            user_id=user_id,
-            message=str(message),
-            due_at=due_at,
-            delay_seconds=delay_seconds,
-            channel="telegram",
-            source="tool",
-            confirm=confirm,
-        )
-
-        metrics.inc("tool_set_timer")
-        return result
-
-    except Exception as e:
-        log_with_context(logger, "warning", "Set timer failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_cancel_timer(**kwargs) -> Dict[str, Any]:
-    """
-    Cancel an existing timer by timer_id.
-    """
-    try:
-        from .timer_service import cancel_timer
-        from .tracing import get_current_user_id
-
-        timer_id = kwargs.get("timer_id")
-        user_id = kwargs.get("user_id") or str(get_current_user_id() or "jarvis_agent")
-
-        if not timer_id:
-            return {"error": "timer_id is required"}
-
-        result = cancel_timer(str(timer_id), user_id=user_id)
-        metrics.inc("tool_cancel_timer")
-        return result
-
-    except Exception as e:
-        log_with_context(logger, "warning", "Cancel timer failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_list_timers(**kwargs) -> Dict[str, Any]:
-    """
-    List timers for a user.
-    """
-    try:
-        from .timer_service import list_timers
-        from .tracing import get_current_user_id
-
-        user_id = kwargs.get("user_id") or str(get_current_user_id() or "jarvis_agent")
-        status = kwargs.get("status")
-        limit = kwargs.get("limit", 50)
-
-        result = list_timers(str(user_id), status=status, limit=int(limit))
-        metrics.inc("tool_list_timers")
-        return result
-
-    except Exception as e:
-        log_with_context(logger, "warning", "List timers failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_request_python_sandbox(**kwargs) -> Dict[str, Any]:
-    """
-    Queue a manual-approval request for running Jarvis-authored Python code.
-    This does not execute code automatically.
-    """
-    try:
-        from .action_queue import create_action_request
-        from .tracing import get_current_user_id
-
-        code = kwargs.get("code")
-        reason = kwargs.get("reason", "agent sandbox request")
-        timeout_seconds = kwargs.get("timeout_seconds")
-        metadata = kwargs.get("metadata") or {}
-
-        if code is None or not str(code).strip():
-            return {"error": "code is required"}
-
-        user_id = get_current_user_id() or "jarvis_agent"
-
-        action = create_action_request(
-            action_name="python_sandbox_execute",
-            description="Python sandbox execute",
-            target="python_executor",
-            context={
-                "code": str(code),
-                "timeout_seconds": timeout_seconds,
-                "reason": reason,
-                "metadata": metadata,
-            },
-            content_preview=str(code)[:400],
-            user_id=str(user_id),
-        )
-
-        status = action.get("status")
-        if status == "blocked":
-            return {"status": "blocked", "action": action}
-
-        if status == "pending":
-            return {
-                "status": "pending",
-                "approval_required": True,
-                "action_id": action.get("id"),
-                "approve_endpoint": f"/jarvis/self/code-sandbox/actions/{action.get('id')}/approve",
-            }
-
-        return {
-            "status": status,
-            "approval_required": False,
-            "action_id": action.get("id"),
-            "execute_endpoint": f"/jarvis/self/code-sandbox/actions/{action.get('id')}/execute",
-        }
-
-    except Exception as e:
-        log_with_context(logger, "warning", "Request Python sandbox failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_execute_python(**kwargs) -> Dict[str, Any]:
-    """
-    Execute Python code written by Jarvis in the sandbox.
-    For when Jarvis writes code himself (higher quality, uses API tokens).
-    """
-    try:
-        from . import python_executor
-
-        code = kwargs.get("code")
-        reason = kwargs.get("reason", "agent execution")
-
-        if code is None or not str(code).strip():
-            return {"error": "code is required"}
-
-        result = python_executor.execute_python(
-            code=code,
-            user_id="jarvis_agent",
-            metadata={"reason": reason, "source": "agent_tool"},
-        )
-
-        metrics.inc("tool_execute_python")
-
-        return {
-            "status": result.status,
-            "exec_id": result.exec_id,
-            "output": result.stdout,
-            "stderr": result.stderr if result.stderr else None,
-            "exit_code": result.exit_code,
-            "duration_ms": round(result.duration_ms, 2),
-            "blocked_reason": result.blocked_reason,
-            "artifacts": result.artifacts,
-        }
-
-    except Exception as e:
-        log_with_context(logger, "warning", "Execute Python failed", error=str(e))
-        return {"error": str(e)}
-
-
-# ============ Sub-Agent Framework Tools (Phase 18) ============
-
-def tool_delegate_to_subagent(**kwargs) -> Dict[str, Any]:
-    """
-    Delegate a task to a sub-agent with tool access.
-    Sub-agents can use tools like search_kb, read_file, calculate, etc.
-    """
-    try:
-        from .subagents import get_registry, SubAgentTask
-        import asyncio
-
-        agent_id = kwargs.get("agent_id", "ollama")
-        instructions = kwargs.get("instructions")
-        input_text = kwargs.get("input_text")
-        context = kwargs.get("context")
-        tools = kwargs.get("tools", [])
-        sync = kwargs.get("sync", False)
-
-        log_with_context(
-            logger,
-            "info",
-            "Delegating task to subagent",
-            agent_id=agent_id,
-            sync=sync,
-            tools_enabled=tools,
-        )
-
-        if not instructions:
-            return {"error": "instructions is required"}
-
-        registry = get_registry()
-        agent = registry.get(agent_id)
-
-        if not agent:
-            return {"error": f"Agent not found: {agent_id}"}
-
-        # Create task
-        task = SubAgentTask(
-            task_id=SubAgentTask.generate_id(agent_id),
-            agent_id=agent_id,
-            instructions=instructions,
-            created_at=datetime.now().isoformat(),
-            input_text=input_text,
-            context=context,
-            tools_enabled=tools,
-        )
-
-        metrics.inc("tool_delegate_to_subagent")
-
-        if sync:
-            # Synchronous execution
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(agent.execute(task))
-            finally:
-                loop.close()
-
-            return {
-                "status": result.status,
-                "task_id": result.task_id,
-                "result": result.result,
-                "error": result.error,
-                "tool_calls": len(result.tool_calls_made),
-                "execution_time_ms": round(result.execution_time_ms, 2),
-                "model_used": result.model_used,
-            }
-        else:
-            # Async - save to queue
-            from .routers.subagent_router import _save_task, SUBAGENT_QUEUE_PENDING
-
-            _save_task(task, SUBAGENT_QUEUE_PENDING)
-
-            return {
-                "status": "queued",
-                "task_id": task.task_id,
-                "agent_id": agent_id,
-                "tools_enabled": tools,
-                "message": "Task queued. Use get_subagent_result to check status."
-            }
-
-    except ImportError:
-        return {"error": "Sub-agent framework not available"}
-    except Exception as e:
-        log_with_context(logger, "warning", "Delegate to subagent failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_get_subagent_result(**kwargs) -> Dict[str, Any]:
-    """
-    Get the result of a delegated sub-agent task.
-    """
-    try:
-        from .routers.subagent_router import _load_task
-
-        task_id = kwargs.get("task_id")
-        if not task_id:
-            return {"error": "task_id is required"}
-
-        task = _load_task(task_id)
-        if not task:
-            return {"error": f"Task not found: {task_id}"}
-
-        metrics.inc("tool_get_subagent_result")
-
-        return {
-            "task_id": task.task_id,
-            "agent_id": task.agent_id,
-            "status": task.status.value,
-            "result": task.result,
-            "error": task.error,
-            "tool_calls_made": task.tool_calls_made,
-            "execution_time_ms": task.execution_time_ms,
-            "created_at": task.created_at,
-            "completed_at": task.completed_at,
-        }
-
-    except ImportError:
-        return {"error": "Sub-agent framework not available"}
-    except Exception as e:
-        log_with_context(logger, "warning", "Get subagent result failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_list_subagents(**kwargs) -> Dict[str, Any]:
-    """
-    List available sub-agents and their tools.
-    """
-    try:
-        from .subagents import get_registry
-
-        registry = get_registry()
-        agents = registry.list_agents()
-
-        metrics.inc("tool_list_subagents")
-
-        return {
-            "agents": agents,
-            "count": len(agents),
-        }
-
-    except ImportError:
-        return {"error": "Sub-agent framework not available"}
-    except Exception as e:
-        log_with_context(logger, "warning", "List subagents failed", error=str(e))
-        return {"error": str(e)}
-
+# Sub-Agent Framework Tools MOVED to tool_modules/subagent_tools.py (T006 refactor)
+# Implementations: tool_delegate_to_subagent, tool_get_subagent_result, tool_list_subagents
 
 # ============ Self-Inspection Tools (Phase 6) ============
 
@@ -6527,727 +6574,14 @@ def tool_self_validation_pulse(**kwargs) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
-# ============ Dynamic Tool Creation ============
+# Dynamic Tool Creation tools MOVED to tool_modules/sandbox_tools.py (T006 refactor)
+# Implementations: tool_write_dynamic_tool, tool_promote_sandbox_tool
 
-def tool_write_dynamic_tool(
-    name: str = None,
-    description: str = None,
-    code: str = None,
-    parameters: dict = None,
-    category: str = "custom",
-    sandbox: bool = True,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Create a new dynamic tool that Jarvis can use.
 
-    Args:
-        name: Tool name (snake_case, e.g., 'my_custom_tool')
-        description: What the tool does
-        code: Python code for the tool handler function
-        parameters: JSON schema for tool parameters
-        category: Tool category (default: custom)
-        sandbox: If True, tool goes to sandbox first (default: True)
+# Learning & Memory tools MOVED to tool_modules/learning_memory_tools.py (T006 refactor)
+# Implementations: tool_record_learning, tool_get_learnings, tool_store_context,
+#                  tool_recall_context, tool_forget_context, tool_record_learnings_batch, tool_store_contexts_batch
 
-    Returns:
-        Status of tool creation
-    """
-    log_with_context(logger, "info", "Tool: write_dynamic_tool", name=name, category=category)
-    metrics.inc("tool_write_dynamic_tool")
-
-    if not name or not description or not code:
-        return {"error": "name, description, and code are required"}
-
-    try:
-        from .tool_loader import DynamicToolLoader, TOOLS_SANDBOX_DIR, TOOLS_DYNAMIC_DIR
-        import re
-
-        # Validate name format
-        if not re.match(r'^[a-z][a-z0-9_]*$', name):
-            return {"error": "name must be snake_case (lowercase, underscores allowed)"}
-
-        # Security validation
-        violations = DynamicToolLoader._validate_code(code, f"{name}.py")
-        if violations:
-            return {"error": "Security violations", "violations": violations}
-
-        # Indent code properly (4 spaces for function body)
-        indented_code = code.replace('\n', '\n    ')
-
-        # Build tool file content
-        tool_content = f'''"""
-Dynamic Tool: {name}
-Category: {category}
-Description: {description}
-Created: {datetime.utcnow().isoformat()}Z
-"""
-from typing import Dict, Any
-
-TOOL_SCHEMA = {{
-    "name": "{name}",
-    "description": """{description}""",
-    "input_schema": {{
-        "type": "object",
-        "properties": {json.dumps(parameters or {}, indent=8)},
-        "required": []
-    }}
-}}
-
-TOOL_CATEGORY = "{category}"
-
-def tool_handler(**kwargs) -> Dict[str, Any]:
-    """Tool handler function."""
-    {indented_code}
-'''
-
-        # Write to appropriate directory
-        target_dir = TOOLS_SANDBOX_DIR if sandbox else TOOLS_DYNAMIC_DIR
-        target_dir.mkdir(parents=True, exist_ok=True)
-        tool_file = target_dir / f"{name}.py"
-        tool_file.write_text(tool_content)
-
-        # If not sandbox, reload immediately
-        if not sandbox:
-            DynamicToolLoader.reload(name)
-
-        return {
-            "status": "created",
-            "name": name,
-            "location": "sandbox" if sandbox else "live",
-            "path": str(tool_file),
-            "next_step": "Use promote_sandbox_tool to make it live" if sandbox else "Tool is now available"
-        }
-
-    except Exception as e:
-        log_with_context(logger, "error", "write_dynamic_tool failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_promote_sandbox_tool(name: str = None, **kwargs) -> Dict[str, Any]:
-    """
-    Promote a tool from sandbox to live production.
-
-    Args:
-        name: Name of the sandbox tool to promote
-
-    Returns:
-        Status of promotion
-    """
-    log_with_context(logger, "info", "Tool: promote_sandbox_tool", name=name)
-    metrics.inc("tool_promote_sandbox_tool")
-
-    if not name:
-        return {"error": "name is required"}
-
-    try:
-        from .tool_loader import DynamicToolLoader, TOOLS_SANDBOX_DIR, TOOLS_DYNAMIC_DIR
-        import shutil
-
-        sandbox_file = TOOLS_SANDBOX_DIR / f"{name}.py"
-        if not sandbox_file.exists():
-            return {"error": f"Tool '{name}' not found in sandbox"}
-
-        # Move to live directory
-        live_file = TOOLS_DYNAMIC_DIR / f"{name}.py"
-        shutil.move(str(sandbox_file), str(live_file))
-
-        # Hot-reload the tool
-        result = DynamicToolLoader.reload(name)
-
-        return {
-            "status": "promoted",
-            "name": name,
-            "path": str(live_file),
-            "reload_result": result
-        }
-
-    except Exception as e:
-        log_with_context(logger, "error", "promote_sandbox_tool failed", error=str(e))
-        return {"error": str(e)}
-
-
-# ============ Learning & Memory Tools ============
-
-def tool_record_learning(
-    fact: str = None,
-    category: str = "general",
-    confidence: float = 0.8,
-    source: str = "conversation",
-    context: str = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Record a learning/insight for cross-session pattern analysis.
-
-    Args:
-        fact: The learning or insight to record
-        category: Category (general, capability, preference, workflow, technical)
-        confidence: Confidence level 0.0-1.0
-        source: Source of learning (conversation, observation, feedback)
-        context: Additional context
-
-    Returns:
-        Status of recording
-    """
-    log_with_context(logger, "info", "Tool: record_learning", category=category)
-    metrics.inc("tool_record_learning")
-
-    if not fact:
-        return {"error": "fact is required"}
-
-    try:
-        from . import session_manager
-
-        conn = session_manager._get_conn()
-
-        # Create learnings table if not exists
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS jarvis_learnings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fact TEXT NOT NULL,
-                category TEXT DEFAULT 'general',
-                confidence REAL DEFAULT 0.8,
-                source TEXT DEFAULT 'conversation',
-                context TEXT,
-                created_at TEXT NOT NULL,
-                validated INTEGER DEFAULT 0,
-                migration_candidate INTEGER DEFAULT 0
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_learnings_category ON jarvis_learnings(category)")
-
-        # Insert learning
-        now = datetime.utcnow().isoformat() + "Z"
-        cursor = conn.execute("""
-            INSERT INTO jarvis_learnings (fact, category, confidence, source, context, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (fact, category, confidence, source, context, now))
-
-        conn.commit()
-        learning_id = cursor.lastrowid
-        conn.close()
-
-        return {
-            "status": "recorded",
-            "learning_id": learning_id,
-            "fact": fact[:100] + "..." if len(fact) > 100 else fact,
-            "category": category,
-            "confidence": confidence
-        }
-
-    except Exception as e:
-        log_with_context(logger, "error", "record_learning failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_get_learnings(
-    category: str = None,
-    days_back: int = 30,
-    limit: int = 20,
-    compact: bool = True,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Retrieve recorded learnings/insights.
-
-    Args:
-        category: Filter by category
-        days_back: How many days back to search
-        limit: Maximum results
-        compact: If True, return only essential fields (fact, category)
-
-    Returns:
-        List of learnings with summary
-    """
-    log_with_context(logger, "info", "Tool: get_learnings", category=category, limit=limit)
-    metrics.inc("tool_get_learnings")
-
-    try:
-        from . import session_manager
-        from datetime import timedelta
-
-        conn = session_manager._get_conn()
-
-        cutoff = (datetime.utcnow() - timedelta(days=days_back)).isoformat() + "Z"
-
-        if category:
-            rows = conn.execute("""
-                SELECT id, fact, category, confidence, source, created_at FROM jarvis_learnings
-                WHERE category = ? AND created_at >= ?
-                ORDER BY confidence DESC, created_at DESC LIMIT ?
-            """, (category, cutoff, limit)).fetchall()
-        else:
-            rows = conn.execute("""
-                SELECT id, fact, category, confidence, source, created_at FROM jarvis_learnings
-                WHERE created_at >= ?
-                ORDER BY confidence DESC, created_at DESC LIMIT ?
-            """, (cutoff, limit)).fetchall()
-
-        conn.close()
-
-        # Build compact or full learnings list
-        if compact:
-            learnings = []
-            by_category = {}
-            for row in rows:
-                cat = row['category'] or 'general'
-                if cat not in by_category:
-                    by_category[cat] = []
-                by_category[cat].append(row['fact'])
-                learnings.append({
-                    "fact": row['fact'],
-                    "category": cat,
-                    "confidence": row['confidence']
-                })
-
-            # Build human-readable summary
-            summary_parts = []
-            for cat, facts in by_category.items():
-                summary_parts.append(f"**{cat.title()}** ({len(facts)}): " + "; ".join(facts[:3]))
-                if len(facts) > 3:
-                    summary_parts[-1] += f" (+{len(facts)-3} more)"
-
-            return {
-                "summary": "\n".join(summary_parts),
-                "learnings": learnings,
-                "count": len(learnings),
-                "by_category": {k: len(v) for k, v in by_category.items()},
-                "days_searched": days_back
-            }
-        else:
-            learnings = [dict(row) for row in rows]
-            return {
-                "learnings": learnings,
-                "count": len(learnings),
-                "category_filter": category,
-                "days_searched": days_back
-            }
-
-    except Exception as e:
-        # Table might not exist yet
-        if "no such table" in str(e):
-            return {"learnings": [], "count": 0, "note": "No learnings recorded yet"}
-        log_with_context(logger, "error", "get_learnings failed", error=str(e))
-        return {"error": str(e)}
-
-
-# ============ Context Persistence Tools ============
-
-def tool_store_context(
-    key: str = None,
-    value: str = None,
-    context_type: str = "general",
-    ttl_hours: int = 168,  # 1 week default
-    user_id: int = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Store a context value for later retrieval.
-
-    Args:
-        key: Unique key for this context
-        value: Value to store (string, will be JSON serialized if dict)
-        context_type: Type of context (general, preference, state, memory)
-        ttl_hours: Time to live in hours (default 168 = 1 week)
-        user_id: Optional user ID
-
-    Returns:
-        Status of storage
-    """
-    log_with_context(logger, "info", "Tool: store_context", key=key, context_type=context_type)
-    metrics.inc("tool_store_context")
-
-    if not key or value is None:
-        return {"error": "key and value are required"}
-
-    try:
-        from . import session_manager
-
-        conn = session_manager._get_conn()
-
-        # Create context_store table if not exists
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS context_store (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                context_type TEXT DEFAULT 'general',
-                user_id INTEGER,
-                created_at TEXT NOT NULL,
-                expires_at TEXT,
-                UNIQUE(key, user_id)
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_context_key ON context_store(key)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_context_type ON context_store(context_type)")
-
-        now = datetime.utcnow()
-        expires = (now + timedelta(hours=ttl_hours)).isoformat() + "Z"
-        now_str = now.isoformat() + "Z"
-
-        # Serialize value if needed
-        if isinstance(value, (dict, list)):
-            value = json.dumps(value)
-
-        # Upsert
-        conn.execute("""
-            INSERT INTO context_store (key, value, context_type, user_id, created_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(key, user_id) DO UPDATE SET
-                value = excluded.value,
-                context_type = excluded.context_type,
-                created_at = excluded.created_at,
-                expires_at = excluded.expires_at
-        """, (key, value, context_type, user_id, now_str, expires))
-
-        conn.commit()
-        conn.close()
-
-        return {
-            "status": "stored",
-            "key": key,
-            "context_type": context_type,
-            "expires_at": expires
-        }
-
-    except Exception as e:
-        log_with_context(logger, "error", "store_context failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_recall_context(
-    key: str = None,
-    context_type: str = None,
-    user_id: int = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Recall a stored context value.
-
-    Args:
-        key: Key to recall (if None, returns all for context_type)
-        context_type: Filter by type
-        user_id: Optional user ID filter
-
-    Returns:
-        Stored context value(s)
-    """
-    log_with_context(logger, "info", "Tool: recall_context", key=key, context_type=context_type)
-    metrics.inc("tool_recall_context")
-
-    try:
-        from . import session_manager
-
-        conn = session_manager._get_conn()
-        now = datetime.utcnow().isoformat() + "Z"
-
-        if key:
-            # Get specific key
-            row = conn.execute("""
-                SELECT * FROM context_store
-                WHERE key = ? AND (user_id = ? OR user_id IS NULL)
-                AND (expires_at IS NULL OR expires_at > ?)
-                ORDER BY created_at DESC LIMIT 1
-            """, (key, user_id, now)).fetchone()
-
-            conn.close()
-
-            if not row:
-                return {"found": False, "key": key}
-
-            value = row["value"]
-            # Try to deserialize JSON
-            try:
-                value = json.loads(value)
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-            return {
-                "found": True,
-                "key": key,
-                "value": value,
-                "context_type": row["context_type"],
-                "created_at": row["created_at"]
-            }
-        else:
-            # Get all for context_type
-            if context_type:
-                rows = conn.execute("""
-                    SELECT * FROM context_store
-                    WHERE context_type = ? AND (user_id = ? OR user_id IS NULL)
-                    AND (expires_at IS NULL OR expires_at > ?)
-                    ORDER BY created_at DESC LIMIT 50
-                """, (context_type, user_id, now)).fetchall()
-            else:
-                rows = conn.execute("""
-                    SELECT * FROM context_store
-                    WHERE (user_id = ? OR user_id IS NULL)
-                    AND (expires_at IS NULL OR expires_at > ?)
-                    ORDER BY created_at DESC LIMIT 50
-                """, (user_id, now)).fetchall()
-
-            conn.close()
-
-            contexts = []
-            for row in rows:
-                value = row["value"]
-                try:
-                    value = json.loads(value)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-                contexts.append({
-                    "key": row["key"],
-                    "value": value,
-                    "context_type": row["context_type"],
-                    "created_at": row["created_at"]
-                })
-
-            return {
-                "found": len(contexts) > 0,
-                "contexts": contexts,
-                "count": len(contexts)
-            }
-
-    except Exception as e:
-        if "no such table" in str(e):
-            return {"found": False, "note": "No context stored yet"}
-        log_with_context(logger, "error", "recall_context failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_forget_context(
-    key: str = None,
-    context_type: str = None,
-    user_id: int = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Delete stored context.
-
-    Args:
-        key: Specific key to delete
-        context_type: Delete all of this type
-        user_id: User ID filter
-
-    Returns:
-        Deletion status
-    """
-    log_with_context(logger, "info", "Tool: forget_context", key=key, context_type=context_type)
-    metrics.inc("tool_forget_context")
-
-    if not key and not context_type:
-        return {"error": "Either key or context_type is required"}
-
-    try:
-        from . import session_manager
-
-        conn = session_manager._get_conn()
-
-        if key:
-            cursor = conn.execute("""
-                DELETE FROM context_store WHERE key = ? AND (user_id = ? OR user_id IS NULL)
-            """, (key, user_id))
-        else:
-            cursor = conn.execute("""
-                DELETE FROM context_store WHERE context_type = ? AND (user_id = ? OR user_id IS NULL)
-            """, (context_type, user_id))
-
-        deleted = cursor.rowcount
-        conn.commit()
-        conn.close()
-
-        return {
-            "status": "deleted",
-            "deleted_count": deleted,
-            "key": key,
-            "context_type": context_type
-        }
-
-    except Exception as e:
-        if "no such table" in str(e):
-            return {"status": "ok", "deleted_count": 0}
-        log_with_context(logger, "error", "forget_context failed", error=str(e))
-        return {"error": str(e)}
-
-
-# ============ Batch Operations (solve step-limit issue) ============
-
-def tool_record_learnings_batch(
-    learnings: list = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Record multiple learnings in a single operation.
-
-    Use this instead of calling record_learning multiple times to avoid step limits!
-
-    Args:
-        learnings: List of dicts, each with: fact (required), category, confidence, source, context
-                   Example: [{"fact": "...", "category": "technical"}, {"fact": "...", "confidence": 0.9}]
-
-    Returns:
-        Summary of all recorded learnings
-    """
-    log_with_context(logger, "info", "Tool: record_learnings_batch", count=len(learnings) if learnings else 0)
-    metrics.inc("tool_record_learnings_batch")
-
-    if not learnings or not isinstance(learnings, list):
-        return {"error": "learnings must be a non-empty list"}
-
-    try:
-        from . import session_manager
-
-        conn = session_manager._get_conn()
-
-        # Create table
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS jarvis_learnings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fact TEXT NOT NULL,
-                category TEXT DEFAULT 'general',
-                confidence REAL DEFAULT 0.8,
-                source TEXT DEFAULT 'conversation',
-                context TEXT,
-                created_at TEXT NOT NULL,
-                validated INTEGER DEFAULT 0,
-                migration_candidate INTEGER DEFAULT 0
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_learnings_category ON jarvis_learnings(category)")
-
-        results = []
-        now = datetime.utcnow().isoformat() + "Z"
-
-        for item in learnings:
-            if not isinstance(item, dict) or "fact" not in item:
-                results.append({"error": "Invalid item, requires 'fact'"})
-                continue
-
-            fact = item["fact"]
-            category = item.get("category", "general")
-            confidence = item.get("confidence", 0.8)
-            source = item.get("source", "batch")
-            context = item.get("context")
-
-            cursor = conn.execute("""
-                INSERT INTO jarvis_learnings (fact, category, confidence, source, context, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (fact, category, confidence, source, context, now))
-
-            results.append({
-                "learning_id": cursor.lastrowid,
-                "fact": fact[:50] + "..." if len(fact) > 50 else fact,
-                "category": category
-            })
-
-        conn.commit()
-        conn.close()
-
-        return {
-            "status": "batch_recorded",
-            "total_count": len(results),
-            "success_count": sum(1 for r in results if "learning_id" in r),
-            "results": results
-        }
-
-    except Exception as e:
-        log_with_context(logger, "error", "record_learnings_batch failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_store_contexts_batch(
-    contexts: list = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Store multiple context values in a single operation.
-
-    Use this instead of calling store_context multiple times to avoid step limits!
-
-    Args:
-        contexts: List of dicts, each with: key (required), value (required), context_type, ttl_hours
-                  Example: [{"key": "k1", "value": "v1"}, {"key": "k2", "value": {"nested": true}}]
-
-    Returns:
-        Summary of all stored contexts
-    """
-    log_with_context(logger, "info", "Tool: store_contexts_batch", count=len(contexts) if contexts else 0)
-    metrics.inc("tool_store_contexts_batch")
-
-    if not contexts or not isinstance(contexts, list):
-        return {"error": "contexts must be a non-empty list"}
-
-    try:
-        from . import session_manager
-
-        conn = session_manager._get_conn()
-
-        # Create table
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS context_store (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                context_type TEXT DEFAULT 'general',
-                user_id INTEGER,
-                created_at TEXT NOT NULL,
-                expires_at TEXT,
-                UNIQUE(key, user_id)
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_context_key ON context_store(key)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_context_type ON context_store(context_type)")
-
-        results = []
-        now = datetime.utcnow()
-        now_str = now.isoformat() + "Z"
-        user_id = kwargs.get("user_id")
-
-        for item in contexts:
-            if not isinstance(item, dict) or "key" not in item or "value" not in item:
-                results.append({"error": "Invalid item, requires 'key' and 'value'"})
-                continue
-
-            key = item["key"]
-            value = item["value"]
-            context_type = item.get("context_type", "general")
-            ttl_hours = item.get("ttl_hours", 168)
-
-            # Serialize value if needed
-            if isinstance(value, (dict, list)):
-                value = json.dumps(value)
-
-            expires = (now + timedelta(hours=ttl_hours)).isoformat() + "Z"
-
-            conn.execute("""
-                INSERT INTO context_store (key, value, context_type, user_id, created_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(key, user_id) DO UPDATE SET
-                    value = excluded.value,
-                    context_type = excluded.context_type,
-                    created_at = excluded.created_at,
-                    expires_at = excluded.expires_at
-            """, (key, value, context_type, user_id, now_str, expires))
-
-            results.append({
-                "key": key,
-                "context_type": context_type,
-                "expires_at": expires
-            })
-
-        conn.commit()
-        conn.close()
-
-        return {
-            "status": "batch_stored",
-            "total_count": len(results),
-            "success_count": sum(1 for r in results if "key" in r),
-            "results": results
-        }
-
-    except Exception as e:
-        log_with_context(logger, "error", "store_contexts_batch failed", error=str(e))
-        return {"error": str(e)}
 
 
 def tool_list_available_tools(category: str = None, search: str = None, **kwargs) -> Dict[str, Any]:
@@ -7896,284 +7230,10 @@ def tool_get_predictive_context(
         return {"error": str(e)}
 
 
-# ============ Phase 20: Identity Evolution Tools ============
-
-def tool_get_self_model(**kwargs) -> Dict[str, Any]:
-    """
-    Get Jarvis's current self-model and identity.
-
-    Returns Jarvis's:
-    - Core traits (base personality)
-    - Self-model (strengths, growth areas, current focus)
-    - Values and principles
-    - Communication style
-    - Relationship memories
-    - Recent learnings
-    - Active patterns
-
-    Use this for self-reflection and understanding who you are.
-    """
-    log_with_context(logger, "info", "Tool: get_self_model")
-    metrics.inc("tool_get_self_model")
-
-    try:
-        from app.services.identity_evolution import identity_evolution_service
-        return identity_evolution_service.get_self_model()
-    except Exception as e:
-        log_with_context(logger, "error", "get_self_model failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_evolve_identity(
-    evolution_type: str,
-    field: str,
-    new_value: Any,
-    reason: str,
-    trigger_event: str = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Evolve Jarvis's identity based on learnings.
-
-    Use this carefully to update your own personality, values, or self-model
-    based on significant learnings or insights.
-
-    Args:
-        evolution_type: Type of evolution - trait_update, value_update, self_model_update,
-                       relationship_update, communication_style_update
-        field: Which field to update - core_traits, self_model, values, communication_style
-        new_value: The new value to set
-        reason: Why this evolution is happening (important for audit trail)
-        trigger_event: What triggered this evolution (optional)
-
-    Returns:
-        Evolution record with approval status
-    """
-    log_with_context(logger, "info", "Tool: evolve_identity",
-                    evolution_type=evolution_type, field=field, reason=reason)
-    metrics.inc("tool_evolve_identity")
-
-    try:
-        from app.services.identity_evolution import identity_evolution_service
-        return identity_evolution_service.evolve_identity(
-            evolution_type=evolution_type,
-            field=field,
-            new_value=new_value,
-            reason=reason,
-            trigger_event=trigger_event
-        )
-    except Exception as e:
-        log_with_context(logger, "error", "evolve_identity failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_log_experience(
-    experience_type: str,
-    context: str,
-    action_taken: str = None,
-    outcome: str = None,
-    lesson_learned: str = None,
-    applies_to: List[str] = None,
-    confidence: float = 0.7,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Log an experience for cross-session learning.
-
-    Use this to record what worked, what didn't, and what you learned.
-    These experiences feed into pattern recognition and identity evolution.
-
-    Args:
-        experience_type: Type - success, failure, learning, insight, correction
-        context: What was happening
-        action_taken: What action was taken
-        outcome: What was the result
-        lesson_learned: What was learned from this
-        applies_to: Categories this applies to ["communication", "tool_usage", "timing"]
-        confidence: How confident are you in this learning (0-1)
-
-    Returns:
-        Experience log entry
-    """
-    log_with_context(logger, "info", "Tool: log_experience",
-                    experience_type=experience_type, confidence=confidence)
-    metrics.inc("tool_log_experience")
-
-    user_id = kwargs.get("user_id")
-    session_id = kwargs.get("session_id")
-
-    try:
-        from app.services.identity_evolution import identity_evolution_service
-        return identity_evolution_service.log_experience(
-            experience_type=experience_type,
-            context=context,
-            action_taken=action_taken,
-            outcome=outcome,
-            lesson_learned=lesson_learned,
-            applies_to=applies_to,
-            confidence=confidence,
-            user_id=user_id,
-            session_id=session_id
-        )
-    except Exception as e:
-        log_with_context(logger, "error", "log_experience failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_get_relationship(user_id: int = 1, **kwargs) -> Dict[str, Any]:
-    """
-    Get relationship memory for a specific user.
-
-    Returns:
-    - Relationship stage (new, getting_to_know, familiar, trusted, deep_partnership)
-    - User preferences learned
-    - Emotional patterns recognized
-    - Trust level
-    - Interaction history
-
-    Args:
-        user_id: User ID (default 1 for Micha)
-    """
-    log_with_context(logger, "info", "Tool: get_relationship", user_id=user_id)
-    metrics.inc("tool_get_relationship")
-
-    try:
-        from app.services.identity_evolution import identity_evolution_service
-        result = identity_evolution_service.get_relationship(user_id)
-        if not result:
-            return {"message": f"No relationship found for user {user_id}"}
-        return result
-    except Exception as e:
-        log_with_context(logger, "error", "get_relationship failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_update_relationship(
-    user_id: int = 1,
-    user_preferences: Dict[str, Any] = None,
-    emotional_patterns: Dict[str, Any] = None,
-    trust_level: float = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Update relationship memory for a user.
-
-    Use this to record learned preferences, recognized patterns, or trust changes.
-
-    Args:
-        user_id: User ID (default 1 for Micha)
-        user_preferences: Preferences dict to merge/update
-        emotional_patterns: Emotional patterns dict to merge/update
-        trust_level: New trust level (0-1)
-    """
-    log_with_context(logger, "info", "Tool: update_relationship", user_id=user_id)
-    metrics.inc("tool_update_relationship")
-
-    updates = {}
-    if user_preferences:
-        updates["user_preferences"] = user_preferences
-    if emotional_patterns:
-        updates["emotional_patterns"] = emotional_patterns
-    if trust_level is not None:
-        updates["trust_level"] = trust_level
-
-    if not updates:
-        return {"message": "No updates provided"}
-
-    try:
-        from app.services.identity_evolution import identity_evolution_service
-        return identity_evolution_service.update_relationship(user_id, updates)
-    except Exception as e:
-        log_with_context(logger, "error", "update_relationship failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_get_learning_patterns(min_confidence: float = 0.6, **kwargs) -> Dict[str, Any]:
-    """
-    Get validated learning patterns from cross-session analysis.
-
-    Returns patterns that have been observed multiple times with sufficient confidence.
-    These are insights about user preferences, timing, communication, etc.
-
-    Args:
-        min_confidence: Minimum confidence threshold (0-1, default 0.6)
-    """
-    log_with_context(logger, "info", "Tool: get_learning_patterns", min_confidence=min_confidence)
-    metrics.inc("tool_get_learning_patterns")
-
-    try:
-        from app.services.identity_evolution import identity_evolution_service
-        patterns = identity_evolution_service.get_validated_patterns(min_confidence)
-        return {
-            "patterns": patterns,
-            "count": len(patterns),
-            "min_confidence": min_confidence
-        }
-    except Exception as e:
-        log_with_context(logger, "error", "get_learning_patterns failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_record_session_learning(
-    session_id: str,
-    topics: List[str],
-    tools_used: List[str],
-    successful_actions: List[str] = None,
-    failed_actions: List[str] = None,
-    learnings: List[Dict[str, Any]] = None,
-    user_mood_start: str = None,
-    user_mood_end: str = None,
-    performance_rating: float = None,
-    improvement_notes: str = None,
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Record learnings from a completed session.
-
-    Call this at the end of meaningful sessions to capture:
-    - What topics were discussed
-    - What tools were used
-    - What worked and what didn't
-    - Explicit learnings to remember
-    - Emotional context
-    - Self-assessment
-
-    Args:
-        session_id: Unique session identifier
-        topics: Topics discussed in this session
-        tools_used: Tools that were used
-        successful_actions: Actions that worked well
-        failed_actions: Actions that failed or were suboptimal
-        learnings: List of learnings [{"type": "preference", "content": "...", "confidence": 0.8}]
-        user_mood_start: User's mood at session start
-        user_mood_end: User's mood at session end
-        performance_rating: Self-rating 0-1
-        improvement_notes: What could be improved
-    """
-    log_with_context(logger, "info", "Tool: record_session_learning",
-                    session_id=session_id, topics=topics)
-    metrics.inc("tool_record_session_learning")
-
-    user_id = kwargs.get("user_id", 1)
-
-    try:
-        from app.services.identity_evolution import identity_evolution_service
-        return identity_evolution_service.record_session_learning(
-            session_id=session_id,
-            user_id=user_id,
-            topics=topics,
-            tools_used=tools_used,
-            successful_actions=successful_actions or [],
-            failed_actions=failed_actions or [],
-            learnings=learnings or [],
-            user_mood_start=user_mood_start,
-            user_mood_end=user_mood_end,
-            performance_rating=performance_rating,
-            improvement_notes=improvement_notes
-        )
-    except Exception as e:
-        log_with_context(logger, "error", "record_session_learning failed", error=str(e))
-        return {"error": str(e)}
+# Phase 20: Identity Evolution Tools MOVED to tool_modules/identity_tools.py (T006 refactor)
+# Implementations: tool_get_self_model, tool_evolve_identity, tool_log_experience,
+#                  tool_get_relationship, tool_update_relationship, tool_get_learning_patterns,
+#                  tool_record_session_learning
 
 
 def tool_generate_image(
@@ -8525,6 +7585,1338 @@ def tool_get_agent_stats(
         return {"error": str(e)}
 
 
+# ============ Phase 22 Tool Implementations ============
+
+def tool_list_specialist_agents(domain: str = None, active_only: bool = True) -> Dict[str, Any]:
+    """List registered specialist agents."""
+    try:
+        from app.services.specialist_agent_service import get_specialist_registry, AgentDomain
+        registry = get_specialist_registry()
+        domain_enum = AgentDomain(domain) if domain else None
+        return {"agents": registry.list_agents(domain=domain_enum, active_only=active_only)}
+    except Exception as e:
+        log_with_context(logger, "error", "list_specialist_agents failed", error=str(e))
+        return {"error": str(e)}
+
+
+def tool_get_specialist_routing(query: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    """Route a query to the most appropriate specialist."""
+    try:
+        from app.services.specialist_agent_service import get_specialist_registry
+        registry = get_specialist_registry()
+        return registry.route_query(query, user_id="micha", context=context)
+    except Exception as e:
+        log_with_context(logger, "error", "get_specialist_routing failed", error=str(e))
+        return {"error": str(e)}
+
+
+def tool_generalize_pattern(cause: str, effect: str, domain: str) -> Dict[str, Any]:
+    """Extract domain-agnostic patterns from cause-effect observations."""
+    try:
+        from app.services.pattern_generalization_service import get_pattern_generalization_service
+        service = get_pattern_generalization_service()
+        return service.generalize_pattern(user_id="micha", cause=cause, effect=effect, domain=domain)
+    except Exception as e:
+        log_with_context(logger, "error", "generalize_pattern failed", error=str(e))
+        return {"error": str(e)}
+
+
+def tool_find_transfer_candidates(target_domain: str, min_confidence: float = 0.6, limit: int = 10) -> Dict[str, Any]:
+    """Find patterns that could be transferred to a new domain."""
+    try:
+        from app.services.pattern_generalization_service import get_pattern_generalization_service
+        service = get_pattern_generalization_service()
+        candidates = service.find_transfer_candidates(domain=target_domain, min_confidence=min_confidence, limit=limit)
+        return {"target_domain": target_domain, "candidates": candidates, "count": len(candidates)}
+    except Exception as e:
+        log_with_context(logger, "error", "find_transfer_candidates failed", error=str(e))
+        return {"error": str(e)}
+
+
+def tool_get_cross_domain_insights() -> Dict[str, Any]:
+    """Get insights about cross-domain pattern learning."""
+    try:
+        from app.services.pattern_generalization_service import get_pattern_generalization_service
+        service = get_pattern_generalization_service()
+        return service.get_cross_domain_insights()
+    except Exception as e:
+        log_with_context(logger, "error", "get_cross_domain_insights failed", error=str(e))
+        return {"error": str(e)}
+
+
+def tool_get_pattern_generalization_stats() -> Dict[str, Any]:
+    """Get statistics about pattern generalization."""
+    try:
+        from app.services.pattern_generalization_service import get_pattern_generalization_service
+        service = get_pattern_generalization_service()
+        return service.get_pattern_stats()
+    except Exception as e:
+        log_with_context(logger, "error", "get_pattern_generalization_stats failed", error=str(e))
+        return {"error": str(e)}
+
+
+# ============ Phase 22A-02: Agent Registry & Lifecycle ============
+
+def tool_register_agent(
+    agent_id: str,
+    domain: str,
+    display_name: str = None,
+    tools: List[str] = None,
+    identity_extension: Dict[str, Any] = None,
+    confidence_threshold: float = 0.7,
+    dependencies: List[str] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Register a new specialist agent."""
+    log_with_context(logger, "info", "Tool: register_agent", agent_id=agent_id, domain=domain)
+    metrics.inc("tool_register_agent")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.register_agent(
+            agent_id=agent_id,
+            domain=domain,
+            display_name=display_name,
+            tools=tools,
+            identity_extension=identity_extension,
+            confidence_threshold=confidence_threshold,
+            dependencies=dependencies
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "register_agent failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_deregister_agent(agent_id: str, force: bool = False, **kwargs) -> Dict[str, Any]:
+    """Remove an agent from the registry."""
+    log_with_context(logger, "info", "Tool: deregister_agent", agent_id=agent_id)
+    metrics.inc("tool_deregister_agent")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.deregister_agent(agent_id, force=force)
+    except Exception as e:
+        log_with_context(logger, "error", "deregister_agent failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_start_agent(agent_id: str, **kwargs) -> Dict[str, Any]:
+    """Start a registered agent."""
+    log_with_context(logger, "info", "Tool: start_agent", agent_id=agent_id)
+    metrics.inc("tool_start_agent")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.start_agent(agent_id)
+    except Exception as e:
+        log_with_context(logger, "error", "start_agent failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_stop_agent(agent_id: str, stop_dependents: bool = False, **kwargs) -> Dict[str, Any]:
+    """Stop an active agent."""
+    log_with_context(logger, "info", "Tool: stop_agent", agent_id=agent_id)
+    metrics.inc("tool_stop_agent")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.stop_agent(agent_id, stop_dependents=stop_dependents)
+    except Exception as e:
+        log_with_context(logger, "error", "stop_agent failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_pause_agent(agent_id: str, **kwargs) -> Dict[str, Any]:
+    """Pause an active agent."""
+    log_with_context(logger, "info", "Tool: pause_agent", agent_id=agent_id)
+    metrics.inc("tool_pause_agent")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.pause_agent(agent_id)
+    except Exception as e:
+        log_with_context(logger, "error", "pause_agent failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_resume_agent(agent_id: str, **kwargs) -> Dict[str, Any]:
+    """Resume a paused agent."""
+    log_with_context(logger, "info", "Tool: resume_agent", agent_id=agent_id)
+    metrics.inc("tool_resume_agent")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.resume_agent(agent_id)
+    except Exception as e:
+        log_with_context(logger, "error", "resume_agent failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_reset_agent(agent_id: str, **kwargs) -> Dict[str, Any]:
+    """Reset an agent from error state."""
+    log_with_context(logger, "info", "Tool: reset_agent", agent_id=agent_id)
+    metrics.inc("tool_reset_agent")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.reset_agent(agent_id)
+    except Exception as e:
+        log_with_context(logger, "error", "reset_agent failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_agent_health_check(agent_id: str = None, **kwargs) -> Dict[str, Any]:
+    """Run health check on one or all agents."""
+    log_with_context(logger, "info", "Tool: agent_health_check", agent_id=agent_id)
+    metrics.inc("tool_agent_health_check")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.health_check(agent_id)
+    except Exception as e:
+        log_with_context(logger, "error", "agent_health_check failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_update_agent_config(
+    agent_id: str,
+    tools: List[str] = None,
+    identity_extension: Dict[str, Any] = None,
+    confidence_threshold: float = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Update agent configuration at runtime."""
+    log_with_context(logger, "info", "Tool: update_agent_config", agent_id=agent_id)
+    metrics.inc("tool_update_agent_config")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.update_config(
+            agent_id=agent_id,
+            tools=tools,
+            identity_extension=identity_extension,
+            confidence_threshold=confidence_threshold
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "update_agent_config failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_agent_registry_stats(**kwargs) -> Dict[str, Any]:
+    """Get overall registry statistics."""
+    log_with_context(logger, "info", "Tool: get_agent_registry_stats")
+    metrics.inc("tool_get_agent_registry_stats")
+
+    try:
+        from app.services.agent_registry_service import get_agent_registry_service
+        service = get_agent_registry_service()
+        return service.get_registry_stats()
+    except Exception as e:
+        log_with_context(logger, "error", "get_agent_registry_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22A-03: Agent Context Isolation ============
+
+def tool_create_agent_context(
+    agent_id: str,
+    session_id: str,
+    allowed_tools: List[str] = None,
+    blocked_tools: List[str] = None,
+    ttl_minutes: int = 60,
+    **kwargs
+) -> Dict[str, Any]:
+    """Create an isolated execution context for an agent."""
+    log_with_context(logger, "info", "Tool: create_agent_context", agent_id=agent_id)
+    metrics.inc("tool_create_agent_context")
+
+    try:
+        from app.services.agent_context_isolation import get_agent_context_isolation_service
+        service = get_agent_context_isolation_service()
+        context = service.create_context(
+            agent_id=agent_id,
+            session_id=session_id,
+            allowed_tools=allowed_tools,
+            blocked_tools=blocked_tools,
+            ttl_minutes=ttl_minutes
+        )
+        return {"success": True, "context": context.to_dict()}
+    except Exception as e:
+        log_with_context(logger, "error", "create_agent_context failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_agent_context(agent_id: str, session_id: str, **kwargs) -> Dict[str, Any]:
+    """Get the current isolated context for an agent session."""
+    log_with_context(logger, "info", "Tool: get_agent_context", agent_id=agent_id)
+    metrics.inc("tool_get_agent_context")
+
+    try:
+        from app.services.agent_context_isolation import get_agent_context_isolation_service
+        service = get_agent_context_isolation_service()
+        context = service.get_context(agent_id, session_id)
+        if context:
+            return {"success": True, "context": context.to_dict()}
+        return {"success": False, "error": "No active context found"}
+    except Exception as e:
+        log_with_context(logger, "error", "get_agent_context failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_store_agent_memory(
+    agent_id: str,
+    key: str,
+    value: Any,
+    memory_type: str = "fact",
+    sharing_policy: str = "private",
+    **kwargs
+) -> Dict[str, Any]:
+    """Store a memory in the agent's isolated namespace."""
+    log_with_context(logger, "info", "Tool: store_agent_memory", agent_id=agent_id, key=key)
+    metrics.inc("tool_store_agent_memory")
+
+    try:
+        from app.services.agent_context_isolation import get_agent_context_isolation_service, SharingPolicy
+        service = get_agent_context_isolation_service()
+        policy = SharingPolicy(sharing_policy) if sharing_policy else SharingPolicy.PRIVATE
+        return service.store_memory(
+            agent_id=agent_id,
+            key=key,
+            value=value,
+            memory_type=memory_type,
+            sharing_policy=policy
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "store_agent_memory failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_recall_agent_memory(
+    agent_id: str,
+    key: str = None,
+    memory_type: str = None,
+    include_shared: bool = False,
+    **kwargs
+) -> Dict[str, Any]:
+    """Recall memories from the agent's isolated namespace."""
+    log_with_context(logger, "info", "Tool: recall_agent_memory", agent_id=agent_id)
+    metrics.inc("tool_recall_agent_memory")
+
+    try:
+        from app.services.agent_context_isolation import get_agent_context_isolation_service
+        service = get_agent_context_isolation_service()
+        memories = service.recall_memory(
+            agent_id=agent_id,
+            key=key,
+            memory_type=memory_type,
+            include_shared=include_shared
+        )
+        return {"success": True, "memories": memories, "count": len(memories)}
+    except Exception as e:
+        log_with_context(logger, "error", "recall_agent_memory failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_set_agent_boundary(
+    source_agent: str,
+    target_agent: str,
+    data_types: List[str] = None,
+    direction: str = "read",
+    **kwargs
+) -> Dict[str, Any]:
+    """Set a data sharing boundary between two agents."""
+    log_with_context(logger, "info", "Tool: set_agent_boundary",
+                    source=source_agent, target=target_agent)
+    metrics.inc("tool_set_agent_boundary")
+
+    try:
+        from app.services.agent_context_isolation import get_agent_context_isolation_service
+        service = get_agent_context_isolation_service()
+        return service.set_boundary(
+            source_agent=source_agent,
+            target_agent=target_agent,
+            data_types=data_types or [],
+            direction=direction
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "set_agent_boundary failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_agent_boundaries(agent_id: str, **kwargs) -> Dict[str, Any]:
+    """Get all data sharing boundaries for an agent."""
+    log_with_context(logger, "info", "Tool: get_agent_boundaries", agent_id=agent_id)
+    metrics.inc("tool_get_agent_boundaries")
+
+    try:
+        from app.services.agent_context_isolation import get_agent_context_isolation_service
+        service = get_agent_context_isolation_service()
+        return service.get_boundaries(agent_id)
+    except Exception as e:
+        log_with_context(logger, "error", "get_agent_boundaries failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_check_tool_access(
+    agent_id: str,
+    session_id: str,
+    tool_name: str,
+    **kwargs
+) -> Dict[str, Any]:
+    """Check if an agent is allowed to use a specific tool."""
+    log_with_context(logger, "info", "Tool: check_tool_access",
+                    agent_id=agent_id, tool=tool_name)
+    metrics.inc("tool_check_tool_access")
+
+    try:
+        from app.services.agent_context_isolation import get_agent_context_isolation_service
+        service = get_agent_context_isolation_service()
+        allowed = service.can_use_tool(agent_id, session_id, tool_name)
+        return {"success": True, "agent_id": agent_id, "tool": tool_name, "allowed": allowed}
+    except Exception as e:
+        log_with_context(logger, "error", "check_tool_access failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_isolation_stats(**kwargs) -> Dict[str, Any]:
+    """Get statistics about agent context isolation."""
+    log_with_context(logger, "info", "Tool: get_isolation_stats")
+    metrics.inc("tool_get_isolation_stats")
+
+    try:
+        from app.services.agent_context_isolation import get_agent_context_isolation_service
+        service = get_agent_context_isolation_service()
+        return service.get_isolation_stats()
+    except Exception as e:
+        log_with_context(logger, "error", "get_isolation_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22A-04: FitJarvis (Fitness Agent) ============
+
+def tool_log_workout(
+    workout_type: str,
+    activity: str,
+    duration_minutes: int = None,
+    intensity: str = "moderate",
+    calories_burned: int = None,
+    distance_km: float = None,
+    sets_reps: List[Dict[str, Any]] = None,
+    notes: str = None,
+    mood_before: str = None,
+    mood_after: str = None,
+    energy_level: int = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Log a workout session."""
+    log_with_context(logger, "info", "Tool: log_workout", workout_type=workout_type, activity=activity)
+    metrics.inc("tool_log_workout")
+
+    try:
+        from app.services.fitness_agent_service import get_fitness_agent_service
+        service = get_fitness_agent_service()
+        return service.log_workout(
+            workout_type=workout_type,
+            activity=activity,
+            duration_minutes=duration_minutes,
+            intensity=intensity,
+            calories_burned=calories_burned,
+            distance_km=distance_km,
+            sets_reps=sets_reps,
+            notes=notes,
+            mood_before=mood_before,
+            mood_after=mood_after,
+            energy_level=energy_level
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "log_workout failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_fitness_trends(
+    period: str = "week",
+    trend_type: str = "all",
+    **kwargs
+) -> Dict[str, Any]:
+    """Get fitness trends and analytics."""
+    log_with_context(logger, "info", "Tool: get_fitness_trends", period=period)
+    metrics.inc("tool_get_fitness_trends")
+
+    try:
+        from app.services.fitness_agent_service import get_fitness_agent_service
+        service = get_fitness_agent_service()
+        return service.get_fitness_trends(period=period, trend_type=trend_type)
+    except Exception as e:
+        log_with_context(logger, "error", "get_fitness_trends failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_track_nutrition(
+    meal_type: str,
+    food_items: List[Dict[str, Any]],
+    notes: str = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Track a meal with nutritional info."""
+    log_with_context(logger, "info", "Tool: track_nutrition", meal_type=meal_type)
+    metrics.inc("tool_track_nutrition")
+
+    try:
+        from app.services.fitness_agent_service import get_fitness_agent_service
+        service = get_fitness_agent_service()
+        return service.track_nutrition(
+            meal_type=meal_type,
+            food_items=food_items,
+            notes=notes
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "track_nutrition failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_suggest_exercise(
+    category: str = None,
+    muscle_groups: List[str] = None,
+    difficulty: str = None,
+    equipment: List[str] = None,
+    limit: int = 5,
+    **kwargs
+) -> Dict[str, Any]:
+    """Get personalized exercise suggestions."""
+    log_with_context(logger, "info", "Tool: suggest_exercise", category=category)
+    metrics.inc("tool_suggest_exercise")
+
+    try:
+        from app.services.fitness_agent_service import get_fitness_agent_service
+        service = get_fitness_agent_service()
+        return service.suggest_exercise(
+            category=category,
+            muscle_groups=muscle_groups,
+            difficulty=difficulty,
+            equipment=equipment,
+            limit=limit
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "suggest_exercise failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_fitness_stats(**kwargs) -> Dict[str, Any]:
+    """Get overall fitness statistics."""
+    log_with_context(logger, "info", "Tool: get_fitness_stats")
+    metrics.inc("tool_get_fitness_stats")
+
+    try:
+        from app.services.fitness_agent_service import get_fitness_agent_service
+        service = get_fitness_agent_service()
+        return service.get_fitness_stats()
+    except Exception as e:
+        log_with_context(logger, "error", "get_fitness_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22A-05: WorkJarvis (Work Agent) ============
+
+def tool_prioritize_tasks(
+    tasks: List[Dict[str, Any]] = None,
+    context: str = None,
+    available_minutes: int = None,
+    energy_level: int = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Prioritize tasks using Eisenhower matrix."""
+    log_with_context(logger, "info", "Tool: prioritize_tasks")
+    metrics.inc("tool_prioritize_tasks")
+
+    try:
+        from app.services.work_agent_service import get_work_agent_service
+        service = get_work_agent_service()
+        return service.prioritize_tasks(
+            tasks=tasks,
+            context=context,
+            available_minutes=available_minutes,
+            energy_level=energy_level
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "prioritize_tasks failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_estimate_effort(
+    task_description: str,
+    task_type: str = "general",
+    complexity: str = "moderate",
+    **kwargs
+) -> Dict[str, Any]:
+    """Estimate effort for a task."""
+    log_with_context(logger, "info", "Tool: estimate_effort", task_type=task_type)
+    metrics.inc("tool_estimate_effort")
+
+    try:
+        from app.services.work_agent_service import get_work_agent_service
+        service = get_work_agent_service()
+        return service.estimate_effort(
+            task_description=task_description,
+            task_type=task_type,
+            complexity=complexity
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "estimate_effort failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_track_focus_time(
+    action: str = "status",
+    task_title: str = None,
+    project: str = None,
+    planned_minutes: int = 25,
+    category: str = "deep_work",
+    focus_quality: int = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Track focus sessions."""
+    log_with_context(logger, "info", "Tool: track_focus_time", action=action)
+    metrics.inc("tool_track_focus_time")
+
+    try:
+        from app.services.work_agent_service import get_work_agent_service
+        service = get_work_agent_service()
+        return service.track_focus_time(
+            action=action,
+            task_title=task_title,
+            project=project,
+            planned_minutes=planned_minutes,
+            category=category,
+            focus_quality=focus_quality
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "track_focus_time failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_suggest_breaks(
+    current_focus_minutes: int = None,
+    energy_level: int = None,
+    last_break_minutes_ago: int = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Get break suggestions."""
+    log_with_context(logger, "info", "Tool: suggest_breaks")
+    metrics.inc("tool_suggest_breaks")
+
+    try:
+        from app.services.work_agent_service import get_work_agent_service
+        service = get_work_agent_service()
+        return service.suggest_breaks(
+            current_focus_minutes=current_focus_minutes,
+            energy_level=energy_level,
+            last_break_minutes_ago=last_break_minutes_ago
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "suggest_breaks failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_work_stats(period: str = "today", **kwargs) -> Dict[str, Any]:
+    """Get work/productivity statistics."""
+    log_with_context(logger, "info", "Tool: get_work_stats", period=period)
+    metrics.inc("tool_get_work_stats")
+
+    try:
+        from app.services.work_agent_service import get_work_agent_service
+        service = get_work_agent_service()
+        return service.get_work_stats(period=period)
+    except Exception as e:
+        log_with_context(logger, "error", "get_work_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22A-06: CommJarvis (Communication Agent) ============
+
+def tool_triage_inbox(
+    messages: List[Dict[str, Any]] = None,
+    source: str = None,
+    limit: int = 20,
+    **kwargs
+) -> Dict[str, Any]:
+    """Triage inbox messages by priority."""
+    log_with_context(logger, "info", "Tool: triage_inbox")
+    metrics.inc("tool_triage_inbox")
+
+    try:
+        from app.services.comm_agent_service import get_comm_agent_service
+        service = get_comm_agent_service()
+        return service.triage_inbox(messages=messages, source=source, limit=limit)
+    except Exception as e:
+        log_with_context(logger, "error", "triage_inbox failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_draft_response(
+    to: str,
+    context: str,
+    tone: str = "friendly",
+    **kwargs
+) -> Dict[str, Any]:
+    """Draft a response with relationship context."""
+    log_with_context(logger, "info", "Tool: draft_response", to=to)
+    metrics.inc("tool_draft_response")
+
+    try:
+        from app.services.comm_agent_service import get_comm_agent_service
+        service = get_comm_agent_service()
+        return service.draft_response(to=to, context=context, tone=tone)
+    except Exception as e:
+        log_with_context(logger, "error", "draft_response failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_track_relationship(
+    action: str = "list",
+    contact_name: str = None,
+    contact_email: str = None,
+    relationship_type: str = None,
+    company: str = None,
+    importance: int = None,
+    notes: str = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Track and manage relationships."""
+    log_with_context(logger, "info", "Tool: track_relationship", action=action)
+    metrics.inc("tool_track_relationship")
+
+    try:
+        from app.services.comm_agent_service import get_comm_agent_service
+        service = get_comm_agent_service()
+        return service.track_relationship(
+            action=action,
+            contact_name=contact_name,
+            contact_email=contact_email,
+            relationship_type=relationship_type,
+            company=company,
+            importance=importance,
+            notes=notes
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "track_relationship failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_schedule_followup(
+    contact_name: str,
+    reason: str,
+    due_date: str,
+    followup_type: str = "check_in",
+    channel: str = "email",
+    **kwargs
+) -> Dict[str, Any]:
+    """Schedule a followup with a contact."""
+    log_with_context(logger, "info", "Tool: schedule_followup", contact=contact_name)
+    metrics.inc("tool_schedule_followup")
+
+    try:
+        from app.services.comm_agent_service import get_comm_agent_service
+        service = get_comm_agent_service()
+        return service.schedule_followup(
+            contact_name=contact_name,
+            reason=reason,
+            due_date=due_date,
+            followup_type=followup_type,
+            channel=channel
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "schedule_followup failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_comm_stats(period: str = "week", **kwargs) -> Dict[str, Any]:
+    """Get communication statistics."""
+    log_with_context(logger, "info", "Tool: get_comm_stats", period=period)
+    metrics.inc("tool_get_comm_stats")
+
+    try:
+        from app.services.comm_agent_service import get_comm_agent_service
+        service = get_comm_agent_service()
+        return service.get_comm_stats(period=period)
+    except Exception as e:
+        log_with_context(logger, "error", "get_comm_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22A-07: Intent-Based Agent Routing Tools ============
+
+def tool_route_query(
+    query: str,
+    context: Dict[str, Any] = None,
+    force_agent: str = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Route a query to the appropriate specialist agent."""
+    log_with_context(logger, "info", "Tool: route_query", query_len=len(query))
+    metrics.inc("tool_route_query")
+
+    try:
+        from app.services.agent_routing_service import get_agent_routing_service
+        service = get_agent_routing_service()
+        decision = service.route_query(query, context, force_agent)
+
+        return {
+            "success": True,
+            "strategy": decision.strategy,
+            "primary_agent": decision.primary_agent,
+            "secondary_agents": decision.secondary_agents,
+            "confidence": decision.confidence,
+            "reasoning": decision.intent_classification.reasoning,
+            "domain_scores": decision.intent_classification.confidence_scores,
+            "detected_intents": decision.intent_classification.detected_intents,
+            "requires_multi_agent": decision.intent_classification.requires_multi_agent
+        }
+    except Exception as e:
+        log_with_context(logger, "error", "route_query failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_classify_intent(
+    query: str,
+    context: Dict[str, Any] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Classify query intent and get confidence scores."""
+    log_with_context(logger, "info", "Tool: classify_intent", query_len=len(query))
+    metrics.inc("tool_classify_intent")
+
+    try:
+        from app.services.agent_routing_service import get_agent_routing_service
+        service = get_agent_routing_service()
+        classification = service.classify_intent(query, context)
+
+        return {
+            "success": True,
+            "primary_domain": classification.primary_domain.value,
+            "confidence_scores": classification.confidence_scores,
+            "detected_intents": classification.detected_intents,
+            "keywords_matched": classification.keywords_matched,
+            "requires_multi_agent": classification.requires_multi_agent,
+            "reasoning": classification.reasoning
+        }
+    except Exception as e:
+        log_with_context(logger, "error", "classify_intent failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_test_routing(queries: List[str], **kwargs) -> Dict[str, Any]:
+    """Test routing for multiple queries (debugging)."""
+    log_with_context(logger, "info", "Tool: test_routing", count=len(queries))
+    metrics.inc("tool_test_routing")
+
+    try:
+        from app.services.agent_routing_service import get_agent_routing_service
+        service = get_agent_routing_service()
+        results = service.test_routing(queries)
+
+        return {
+            "success": True,
+            "results": results,
+            "count": len(results)
+        }
+    except Exception as e:
+        log_with_context(logger, "error", "test_routing failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_routing_stats(days: int = 7, **kwargs) -> Dict[str, Any]:
+    """Get routing statistics."""
+    log_with_context(logger, "info", "Tool: get_routing_stats", days=days)
+    metrics.inc("tool_get_routing_stats")
+
+    try:
+        from app.services.agent_routing_service import get_agent_routing_service
+        service = get_agent_routing_service()
+        return service.get_routing_stats(days=days)
+    except Exception as e:
+        log_with_context(logger, "error", "get_routing_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22A-08: Multi-Agent Collaboration Tools ============
+
+def tool_execute_collaboration(
+    query: str,
+    agents: List[str],
+    collaboration_type: str = "parallel",
+    context: Dict[str, Any] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Execute multi-agent collaboration."""
+    log_with_context(logger, "info", "Tool: execute_collaboration", agents=agents)
+    metrics.inc("tool_execute_collaboration")
+
+    try:
+        from app.services.multi_agent_collaboration import (
+            execute_collaboration_sync, CollaborationType
+        )
+
+        collab_type = CollaborationType(collaboration_type)
+        return execute_collaboration_sync(
+            query=query,
+            agents=agents,
+            collaboration_type=collab_type,
+            context=context or {}
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "execute_collaboration failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_collaboration_stats(days: int = 7, **kwargs) -> Dict[str, Any]:
+    """Get collaboration statistics."""
+    log_with_context(logger, "info", "Tool: get_collaboration_stats", days=days)
+    metrics.inc("tool_get_collaboration_stats")
+
+    try:
+        from app.services.multi_agent_collaboration import get_multi_agent_collaboration_service
+        service = get_multi_agent_collaboration_service()
+        return service.get_collaboration_stats(days=days)
+    except Exception as e:
+        log_with_context(logger, "error", "get_collaboration_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22A-09: Agent Delegation Tools ============
+
+def tool_delegate_task(
+    query: str,
+    context: Dict[str, Any] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Delegate a complex task to specialist agents."""
+    log_with_context(logger, "info", "Tool: delegate_task", query_len=len(query))
+    metrics.inc("tool_delegate_task")
+
+    try:
+        from app.services.agent_delegation_service import get_agent_delegation_service
+        service = get_agent_delegation_service()
+        return service.delegate_all(query, context or {})
+    except Exception as e:
+        log_with_context(logger, "error", "delegate_task failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_delegation_status(session_id: int, **kwargs) -> Dict[str, Any]:
+    """Get status of a delegation session."""
+    log_with_context(logger, "info", "Tool: get_delegation_status", session_id=session_id)
+    metrics.inc("tool_get_delegation_status")
+
+    try:
+        from app.services.agent_delegation_service import get_agent_delegation_service
+        service = get_agent_delegation_service()
+        return service.get_session_status(session_id)
+    except Exception as e:
+        log_with_context(logger, "error", "get_delegation_status failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_delegation_stats(days: int = 7, **kwargs) -> Dict[str, Any]:
+    """Get delegation statistics."""
+    log_with_context(logger, "info", "Tool: get_delegation_stats", days=days)
+    metrics.inc("tool_get_delegation_stats")
+
+    try:
+        from app.services.agent_delegation_service import get_agent_delegation_service
+        service = get_agent_delegation_service()
+        return service.get_delegation_stats(days=days)
+    except Exception as e:
+        log_with_context(logger, "error", "get_delegation_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22B-02: Message Queue Tools ============
+
+def tool_enqueue_message(
+    queue_name: str,
+    payload: Dict[str, Any],
+    priority: str = "normal",
+    delay_seconds: int = 0,
+    **kwargs
+) -> Dict[str, Any]:
+    """Enqueue a message for async processing."""
+    log_with_context(logger, "info", "Tool: enqueue_message", queue=queue_name)
+    metrics.inc("tool_enqueue_message")
+
+    try:
+        from app.services.message_queue_service import get_message_queue_service
+        service = get_message_queue_service()
+        return service.enqueue(queue_name, payload, priority, delay_seconds)
+    except Exception as e:
+        log_with_context(logger, "error", "enqueue_message failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_dequeue_message(
+    queue_name: str,
+    limit: int = 1,
+    **kwargs
+) -> Dict[str, Any]:
+    """Dequeue messages for processing."""
+    log_with_context(logger, "info", "Tool: dequeue_message", queue=queue_name)
+    metrics.inc("tool_dequeue_message")
+
+    try:
+        from app.services.message_queue_service import get_message_queue_service
+        service = get_message_queue_service()
+        return service.dequeue(queue_name, limit=limit)
+    except Exception as e:
+        log_with_context(logger, "error", "dequeue_message failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_queue_stats(queue_name: str = None, **kwargs) -> Dict[str, Any]:
+    """Get message queue statistics."""
+    log_with_context(logger, "info", "Tool: get_queue_stats", queue=queue_name)
+    metrics.inc("tool_get_queue_stats")
+
+    try:
+        from app.services.message_queue_service import get_message_queue_service
+        service = get_message_queue_service()
+        return service.get_queue_stats(queue_name)
+    except Exception as e:
+        log_with_context(logger, "error", "get_queue_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22B-03: Request/Response Tools ============
+
+def tool_agent_request(
+    from_agent: str,
+    to_agent: str,
+    method: str,
+    params: Dict[str, Any] = None,
+    timeout_ms: int = 30000,
+    **kwargs
+) -> Dict[str, Any]:
+    """Make synchronous request to another agent."""
+    log_with_context(logger, "info", "Tool: agent_request", from_agent=from_agent, to_agent=to_agent)
+    metrics.inc("tool_agent_request")
+
+    try:
+        from app.services.request_response_service import get_request_response_service
+        service = get_request_response_service()
+        return service.request(from_agent, to_agent, method, params, timeout_ms)
+    except Exception as e:
+        log_with_context(logger, "error", "agent_request failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_scatter_gather(
+    from_agent: str,
+    to_agents: List[str],
+    method: str,
+    params: Dict[str, Any] = None,
+    timeout_ms: int = 30000,
+    **kwargs
+) -> Dict[str, Any]:
+    """Send request to multiple agents and gather responses."""
+    log_with_context(logger, "info", "Tool: scatter_gather", to_agents=to_agents)
+    metrics.inc("tool_scatter_gather")
+
+    try:
+        from app.services.request_response_service import get_request_response_service
+        service = get_request_response_service()
+        return service.scatter_gather(from_agent, to_agents, method, params, timeout_ms)
+    except Exception as e:
+        log_with_context(logger, "error", "scatter_gather failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_circuit_status(agent_name: str = None, **kwargs) -> Dict[str, Any]:
+    """Get circuit breaker status."""
+    log_with_context(logger, "info", "Tool: get_circuit_status", agent=agent_name)
+    metrics.inc("tool_get_circuit_status")
+
+    try:
+        from app.services.request_response_service import get_request_response_service
+        service = get_request_response_service()
+        return service.get_circuit_status(agent_name)
+    except Exception as e:
+        log_with_context(logger, "error", "get_circuit_status failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_propose_agent_negotiation(
+    title: str,
+    initiator_agent: str,
+    candidate_agents: List[str],
+    strategy: str = "capability_based",
+    original_query: str = None,
+    context: Dict[str, Any] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Create a new agent coordination negotiation."""
+    log_with_context(logger, "info", "Tool: propose_agent_negotiation", initiator=initiator_agent, strategy=strategy)
+    metrics.inc("tool_propose_agent_negotiation")
+
+    try:
+        from app.services.agent_coordination_service import get_agent_coordination_service
+        service = get_agent_coordination_service()
+        return service.propose_negotiation(title, initiator_agent, candidate_agents, strategy, original_query, context)
+    except Exception as e:
+        log_with_context(logger, "error", "propose_agent_negotiation failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_claim_agent_task(
+    negotiation_id: str,
+    agent_name: str,
+    capability_score: float = None,
+    rationale: str = None,
+    metadata: Dict[str, Any] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Submit an agent claim for a negotiated task."""
+    log_with_context(logger, "info", "Tool: claim_agent_task", negotiation_id=negotiation_id, agent=agent_name)
+    metrics.inc("tool_claim_agent_task")
+
+    try:
+        from app.services.agent_coordination_service import get_agent_coordination_service
+        service = get_agent_coordination_service()
+        return service.claim_task(negotiation_id, agent_name, capability_score, rationale, metadata)
+    except Exception as e:
+        log_with_context(logger, "error", "claim_agent_task failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_submit_agent_bid(
+    negotiation_id: str,
+    agent_name: str,
+    bid_score: float,
+    rationale: str = None,
+    metadata: Dict[str, Any] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Submit an auction bid for a negotiation."""
+    log_with_context(logger, "info", "Tool: submit_agent_bid", negotiation_id=negotiation_id, agent=agent_name)
+    metrics.inc("tool_submit_agent_bid")
+
+    try:
+        from app.services.agent_coordination_service import get_agent_coordination_service
+        service = get_agent_coordination_service()
+        return service.submit_bid(negotiation_id, agent_name, bid_score, rationale, metadata)
+    except Exception as e:
+        log_with_context(logger, "error", "submit_agent_bid failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_resolve_agent_conflict(
+    negotiation_id: str,
+    arbitrator_agent: str = "jarvis_core",
+    preferred_agent: str = None,
+    resolution_note: str = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Resolve a contested negotiation."""
+    log_with_context(logger, "info", "Tool: resolve_agent_conflict", negotiation_id=negotiation_id)
+    metrics.inc("tool_resolve_agent_conflict")
+
+    try:
+        from app.services.agent_coordination_service import get_agent_coordination_service
+        service = get_agent_coordination_service()
+        return service.resolve_conflict(negotiation_id, arbitrator_agent, preferred_agent, resolution_note)
+    except Exception as e:
+        log_with_context(logger, "error", "resolve_agent_conflict failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_record_consensus_vote(
+    negotiation_id: str,
+    agent_name: str,
+    vote_value: str,
+    rationale: str = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Record a consensus vote for a negotiation."""
+    log_with_context(logger, "info", "Tool: record_consensus_vote", negotiation_id=negotiation_id, agent=agent_name)
+    metrics.inc("tool_record_consensus_vote")
+
+    try:
+        from app.services.agent_coordination_service import get_agent_coordination_service
+        service = get_agent_coordination_service()
+        return service.record_consensus_vote(negotiation_id, agent_name, vote_value, rationale)
+    except Exception as e:
+        log_with_context(logger, "error", "record_consensus_vote failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_coordination_status(negotiation_id: str, **kwargs) -> Dict[str, Any]:
+    """Get full status for a negotiation."""
+    log_with_context(logger, "info", "Tool: get_coordination_status", negotiation_id=negotiation_id)
+    metrics.inc("tool_get_coordination_status")
+
+    try:
+        from app.services.agent_coordination_service import get_agent_coordination_service
+        service = get_agent_coordination_service()
+        return service.get_coordination_status(negotiation_id)
+    except Exception as e:
+        log_with_context(logger, "error", "get_coordination_status failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_coordination_stats(days: int = 7, **kwargs) -> Dict[str, Any]:
+    """Get coordination statistics."""
+    log_with_context(logger, "info", "Tool: get_coordination_stats", days=days)
+    metrics.inc("tool_get_coordination_stats")
+
+    try:
+        from app.services.agent_coordination_service import get_agent_coordination_service
+        service = get_agent_coordination_service()
+        return service.get_coordination_stats(days=days)
+    except Exception as e:
+        log_with_context(logger, "error", "get_coordination_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ============ Phase 22B-04/05/06: Shared Context + Subscriptions + Privacy ============
+
+def tool_publish_agent_context(
+    source_agent: str,
+    context_key: str,
+    context_value: Dict[str, Any],
+    visibility: str = "domain",
+    domain: str = None,
+    tags: List[str] = None,
+    metadata: Dict[str, Any] = None,
+    session_id: str = None,
+    ttl_minutes: int = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Publish context into the cross-agent context pool."""
+    log_with_context(logger, "info", "Tool: publish_agent_context", source_agent=source_agent, key=context_key)
+    metrics.inc("tool_publish_agent_context")
+
+    try:
+        from app.services.agent_context_pool_service import get_agent_context_pool_service
+        service = get_agent_context_pool_service()
+        return service.publish_context(
+            source_agent=source_agent,
+            context_key=context_key,
+            context_value=context_value,
+            visibility=visibility,
+            domain=domain,
+            tags=tags,
+            metadata=metadata,
+            session_id=session_id,
+            ttl_minutes=ttl_minutes,
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "publish_agent_context failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_subscribe_agent_context(
+    agent_id: str,
+    visibility_levels: List[str] = None,
+    domains: List[str] = None,
+    source_agents: List[str] = None,
+    tags: List[str] = None,
+    include_temporary: bool = False,
+    **kwargs
+) -> Dict[str, Any]:
+    """Create or update a context subscription profile for an agent."""
+    log_with_context(logger, "info", "Tool: subscribe_agent_context", agent_id=agent_id)
+    metrics.inc("tool_subscribe_agent_context")
+
+    try:
+        from app.services.agent_context_pool_service import get_agent_context_pool_service
+        service = get_agent_context_pool_service()
+        return service.subscribe(
+            agent_id=agent_id,
+            visibility_levels=visibility_levels,
+            domains=domains,
+            source_agents=source_agents,
+            tags=tags,
+            include_temporary=include_temporary,
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "subscribe_agent_context failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_read_agent_context(
+    agent_id: str,
+    session_id: str = None,
+    since_minutes: int = 1440,
+    limit: int = 50,
+    **kwargs
+) -> Dict[str, Any]:
+    """Read visible entries from the shared context pool."""
+    log_with_context(logger, "info", "Tool: read_agent_context", agent_id=agent_id)
+    metrics.inc("tool_read_agent_context")
+
+    try:
+        from app.services.agent_context_pool_service import get_agent_context_pool_service
+        service = get_agent_context_pool_service()
+        return service.read_context(
+            agent_id=agent_id,
+            session_id=session_id,
+            since_minutes=since_minutes,
+            limit=limit,
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "read_agent_context failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_set_context_privacy_boundary(
+    source_agent: str,
+    target_agent: str,
+    allowed_levels: List[str] = None,
+    allowed_keys: List[str] = None,
+    denied_keys: List[str] = None,
+    active: bool = True,
+    **kwargs
+) -> Dict[str, Any]:
+    """Set explicit privacy boundary for source->target context sharing."""
+    log_with_context(logger, "info", "Tool: set_context_privacy_boundary", source=source_agent, target=target_agent)
+    metrics.inc("tool_set_context_privacy_boundary")
+
+    try:
+        from app.services.agent_context_pool_service import get_agent_context_pool_service
+        service = get_agent_context_pool_service()
+        return service.set_privacy_boundary(
+            source_agent=source_agent,
+            target_agent=target_agent,
+            allowed_levels=allowed_levels,
+            allowed_keys=allowed_keys,
+            denied_keys=denied_keys,
+            active=active,
+        )
+    except Exception as e:
+        log_with_context(logger, "error", "set_context_privacy_boundary failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+def tool_get_context_pool_stats(days: int = 7, **kwargs) -> Dict[str, Any]:
+    """Get statistics for context pool, subscriptions, and privacy boundaries."""
+    log_with_context(logger, "info", "Tool: get_context_pool_stats", days=days)
+    metrics.inc("tool_get_context_pool_stats")
+
+    try:
+        from app.services.agent_context_pool_service import get_agent_context_pool_service
+        service = get_agent_context_pool_service()
+        return service.get_pool_stats(days=days)
+    except Exception as e:
+        log_with_context(logger, "error", "get_context_pool_stats failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
 # ============ Tool Registry ============
 
 TOOL_REGISTRY: Dict[str, Callable] = {
@@ -8590,35 +8982,11 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "list_available_tools": tool_list_available_tools,
     "record_decision_outcome": tool_record_decision_outcome,
     "get_git_events": tool_get_git_events,
-    "delegate_ollama_task": tool_delegate_ollama_task,
-    "get_ollama_task_status": tool_get_ollama_task_status,
-    "get_ollama_queue_status": tool_get_ollama_queue_status,
-    "cancel_ollama_task": tool_cancel_ollama_task,
-    "get_ollama_callback_result": tool_get_ollama_callback_result,
-    "ask_ollama": tool_ask_ollama,
-    "ollama_python": tool_ollama_python,
-    "set_timer": tool_set_timer,
-    "cancel_timer": tool_cancel_timer,
-    "list_timers": tool_list_timers,
-    "request_python_sandbox": tool_request_python_sandbox,
-    "execute_python": tool_execute_python,
-    # Sub-Agent Framework
-    "delegate_to_subagent": tool_delegate_to_subagent,
-    "get_subagent_result": tool_get_subagent_result,
-    "list_subagents": tool_list_subagents,
-    # Dynamic Tool Creation (Phase 18+)
-    "write_dynamic_tool": tool_write_dynamic_tool,
-    "promote_sandbox_tool": tool_promote_sandbox_tool,
-    # Learning & Memory
-    "record_learning": tool_record_learning,
-    "get_learnings": tool_get_learnings,
-    # Context Persistence
-    "store_context": tool_store_context,
-    "recall_context": tool_recall_context,
-    "forget_context": tool_forget_context,
-    # Batch Operations (avoid step-limit)
-    "record_learnings_batch": tool_record_learnings_batch,
-    "store_contexts_batch": tool_store_contexts_batch,
+    # Ollama tools MOVED to tool_modules/ollama_tools.py (T006 refactor)
+    # Timer tools MOVED to tool_modules/timer_tools.py (T006 refactor)
+    # Subagent tools MOVED to tool_modules/subagent_tools.py (T006 refactor)
+    # Sandbox tools MOVED to tool_modules/sandbox_tools.py (T006 refactor)
+    # Learning & Memory tools MOVED to tool_modules/learning_memory_tools.py (T006 refactor)
     # Tool Autonomy (Phase 19.6)
     "manage_tool_registry": tool_manage_tool_registry,
     "add_decision_rule": tool_add_decision_rule,
@@ -8630,14 +8998,7 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "get_predictive_context": tool_get_predictive_context,
     # Jarvis Wishes: Image Generation (Tier 3)
     "generate_image": tool_generate_image,
-    # Phase 20: Identity Evolution
-    "get_self_model": tool_get_self_model,
-    "evolve_identity": tool_evolve_identity,
-    "log_experience": tool_log_experience,
-    "get_relationship": tool_get_relationship,
-    "update_relationship": tool_update_relationship,
-    "get_learning_patterns": tool_get_learning_patterns,
-    "record_session_learning": tool_record_session_learning,
+    # Phase 20: Identity Evolution MOVED to tool_modules/identity_tools.py (T006 refactor)
     # Phase 21: Intelligent System Evolution
     # T-21A-01: Smart Tool Chains
     "get_tool_chain_suggestions": tool_get_tool_chain_suggestions,
@@ -8655,6 +9016,86 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "create_agent_handoff": tool_create_agent_handoff,
     "get_pending_handoffs": tool_get_pending_handoffs,
     "get_agent_stats": tool_get_agent_stats,
+    # Phase 22: Emergent Intelligence
+    # T-22A-01: Specialist Agent Registry
+    "list_specialist_agents": tool_list_specialist_agents,
+    "get_specialist_routing": tool_get_specialist_routing,
+    # T-22C-01: Pattern Generalization Engine
+    "generalize_pattern": tool_generalize_pattern,
+    "find_transfer_candidates": tool_find_transfer_candidates,
+    "get_cross_domain_insights": tool_get_cross_domain_insights,
+    "get_pattern_generalization_stats": tool_get_pattern_generalization_stats,
+    # Phase 22A-02: Agent Registry & Lifecycle
+    "register_agent": tool_register_agent,
+    "deregister_agent": tool_deregister_agent,
+    "start_agent": tool_start_agent,
+    "stop_agent": tool_stop_agent,
+    "pause_agent": tool_pause_agent,
+    "resume_agent": tool_resume_agent,
+    "reset_agent": tool_reset_agent,
+    "agent_health_check": tool_agent_health_check,
+    "update_agent_config": tool_update_agent_config,
+    "get_agent_registry_stats": tool_get_agent_registry_stats,
+    # Phase 22A-03: Agent Context Isolation
+    "create_agent_context": tool_create_agent_context,
+    "get_agent_context": tool_get_agent_context,
+    "store_agent_memory": tool_store_agent_memory,
+    "recall_agent_memory": tool_recall_agent_memory,
+    "set_agent_boundary": tool_set_agent_boundary,
+    "get_agent_boundaries": tool_get_agent_boundaries,
+    "check_tool_access": tool_check_tool_access,
+    "get_isolation_stats": tool_get_isolation_stats,
+    # Phase 22A-04: FitJarvis (Fitness Agent)
+    "log_workout": tool_log_workout,
+    "get_fitness_trends": tool_get_fitness_trends,
+    "track_nutrition": tool_track_nutrition,
+    "suggest_exercise": tool_suggest_exercise,
+    "get_fitness_stats": tool_get_fitness_stats,
+    # Phase 22A-05: WorkJarvis (Work Agent)
+    "prioritize_tasks": tool_prioritize_tasks,
+    "estimate_effort": tool_estimate_effort,
+    "track_focus_time": tool_track_focus_time,
+    "suggest_breaks": tool_suggest_breaks,
+    "get_work_stats": tool_get_work_stats,
+    # Phase 22A-06: CommJarvis (Communication Agent)
+    "triage_inbox": tool_triage_inbox,
+    "draft_response": tool_draft_response,
+    "track_relationship": tool_track_relationship,
+    "schedule_followup": tool_schedule_followup,
+    "get_comm_stats": tool_get_comm_stats,
+    # Phase 22A-07: Intent-Based Agent Routing
+    "route_query": tool_route_query,
+    "classify_intent": tool_classify_intent,
+    "test_routing": tool_test_routing,
+    "get_routing_stats": tool_get_routing_stats,
+    # Phase 22A-08: Multi-Agent Collaboration
+    "execute_collaboration": tool_execute_collaboration,
+    "get_collaboration_stats": tool_get_collaboration_stats,
+    # Phase 22A-09: Agent Delegation Protocol
+    "delegate_task": tool_delegate_task,
+    "get_delegation_status": tool_get_delegation_status,
+    "get_delegation_stats": tool_get_delegation_stats,
+    # Phase 22B-02: Message Queue
+    "enqueue_message": tool_enqueue_message,
+    "dequeue_message": tool_dequeue_message,
+    "get_queue_stats": tool_get_queue_stats,
+    # Phase 22B-03: Request/Response
+    "agent_request": tool_agent_request,
+    "scatter_gather": tool_scatter_gather,
+    "get_circuit_status": tool_get_circuit_status,
+    "propose_agent_negotiation": tool_propose_agent_negotiation,
+    "claim_agent_task": tool_claim_agent_task,
+    "submit_agent_bid": tool_submit_agent_bid,
+    "resolve_agent_conflict": tool_resolve_agent_conflict,
+    "record_consensus_vote": tool_record_consensus_vote,
+    "get_coordination_status": tool_get_coordination_status,
+    "get_coordination_stats": tool_get_coordination_stats,
+    # Phase 22B-04/05/06: Shared Context + Subscriptions + Privacy Boundaries
+    "publish_agent_context": tool_publish_agent_context,
+    "subscribe_agent_context": tool_subscribe_agent_context,
+    "read_agent_context": tool_read_agent_context,
+    "set_context_privacy_boundary": tool_set_context_privacy_boundary,
+    "get_context_pool_stats": tool_get_context_pool_stats,
 }
 
 # Load connector-provided tools (auto-discovery in app/connectors)
@@ -9974,6 +10415,264 @@ try:
     log_with_context(logger, "info", "Cross-Session tools loaded (Tier 3)", count=6)
 except Exception as e:
     log_with_context(logger, "warning", "Cross-Session tools load failed", error=str(e))
+
+# U4: AI Assistant Handoff Tools
+try:
+    from .tool_modules.handoff_tools import (
+        HANDOFF_TOOLS,
+        create_handoff,
+        get_pending_handoffs,
+        complete_handoff,
+        get_handoff_context,
+        suggest_assistant,
+    )
+    TOOL_DEFINITIONS.extend(HANDOFF_TOOLS)
+    TOOL_REGISTRY.update({
+        "create_handoff": create_handoff,
+        "get_pending_handoffs": get_pending_handoffs,
+        "complete_handoff": complete_handoff,
+        "get_handoff_context": get_handoff_context,
+        "suggest_assistant": suggest_assistant,
+    })
+    log_with_context(logger, "info", "AI Assistant Handoff tools loaded (U4)", count=len(HANDOFF_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Handoff tools load failed", error=str(e))
+
+# U3: Smart Memory Retrieval Tools
+try:
+    from .tool_modules.smart_retrieval_tools import (
+        SMART_RETRIEVAL_TOOLS,
+        smart_recall,
+        get_retrieval_strategies,
+        analyze_query_for_retrieval,
+        get_memory_stats,
+    )
+    TOOL_DEFINITIONS.extend(SMART_RETRIEVAL_TOOLS)
+    TOOL_REGISTRY.update({
+        "smart_recall": smart_recall,
+        "get_retrieval_strategies": get_retrieval_strategies,
+        "analyze_query_for_retrieval": analyze_query_for_retrieval,
+        "get_memory_stats": get_memory_stats,
+    })
+    log_with_context(logger, "info", "Smart Retrieval tools loaded (U3)", count=len(SMART_RETRIEVAL_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Smart Retrieval tools load failed", error=str(e))
+
+# T006: Timer Tools (extracted from inline)
+try:
+    from .tool_modules.timer_tools import (
+        TIMER_TOOLS,
+        tool_set_timer,
+        tool_cancel_timer,
+        tool_list_timers,
+    )
+    TOOL_DEFINITIONS.extend(TIMER_TOOLS)
+    TOOL_REGISTRY.update({
+        "set_timer": tool_set_timer,
+        "cancel_timer": tool_cancel_timer,
+        "list_timers": tool_list_timers,
+    })
+    log_with_context(logger, "info", "Timer tools loaded (T006 refactor)", count=len(TIMER_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Timer tools load failed", error=str(e))
+
+# T006: Ollama Tools (extracted from inline)
+try:
+    from .tool_modules.ollama_tools import (
+        OLLAMA_TOOLS,
+        tool_delegate_ollama_task,
+        tool_get_ollama_task_status,
+        tool_get_ollama_queue_status,
+        tool_cancel_ollama_task,
+        tool_get_ollama_callback_result,
+        tool_ask_ollama,
+        tool_ollama_python,
+    )
+    TOOL_DEFINITIONS.extend(OLLAMA_TOOLS)
+    TOOL_REGISTRY.update({
+        "delegate_ollama_task": tool_delegate_ollama_task,
+        "get_ollama_task_status": tool_get_ollama_task_status,
+        "get_ollama_queue_status": tool_get_ollama_queue_status,
+        "cancel_ollama_task": tool_cancel_ollama_task,
+        "get_ollama_callback_result": tool_get_ollama_callback_result,
+        "ask_ollama": tool_ask_ollama,
+        "ollama_python": tool_ollama_python,
+    })
+    log_with_context(logger, "info", "Ollama tools loaded (T006 refactor)", count=len(OLLAMA_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Ollama tools load failed", error=str(e))
+
+# T006: Subagent Tools (extracted from inline)
+try:
+    from .tool_modules.subagent_tools import (
+        SUBAGENT_TOOLS,
+        tool_delegate_to_subagent,
+        tool_get_subagent_result,
+        tool_list_subagents,
+    )
+    TOOL_DEFINITIONS.extend(SUBAGENT_TOOLS)
+    TOOL_REGISTRY.update({
+        "delegate_to_subagent": tool_delegate_to_subagent,
+        "get_subagent_result": tool_get_subagent_result,
+        "list_subagents": tool_list_subagents,
+    })
+    log_with_context(logger, "info", "Subagent tools loaded (T006 refactor)", count=len(SUBAGENT_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Subagent tools load failed", error=str(e))
+
+# T006: Sandbox Tools (extracted from inline)
+try:
+    from .tool_modules.sandbox_tools import (
+        SANDBOX_TOOLS,
+        tool_request_python_sandbox,
+        tool_execute_python,
+        tool_write_dynamic_tool,
+        tool_promote_sandbox_tool,
+    )
+    TOOL_DEFINITIONS.extend(SANDBOX_TOOLS)
+    TOOL_REGISTRY.update({
+        "request_python_sandbox": tool_request_python_sandbox,
+        "execute_python": tool_execute_python,
+        "write_dynamic_tool": tool_write_dynamic_tool,
+        "promote_sandbox_tool": tool_promote_sandbox_tool,
+    })
+    log_with_context(logger, "info", "Sandbox tools loaded (T006 refactor)", count=len(SANDBOX_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Sandbox tools load failed", error=str(e))
+
+# T006: Learning & Memory Tools (extracted from inline)
+try:
+    from .tool_modules.learning_memory_tools import (
+        LEARNING_MEMORY_TOOLS,
+        tool_record_learning,
+        tool_get_learnings,
+        tool_store_context,
+        tool_recall_context,
+        tool_forget_context,
+        tool_record_learnings_batch,
+        tool_store_contexts_batch,
+    )
+    TOOL_DEFINITIONS.extend(LEARNING_MEMORY_TOOLS)
+    TOOL_REGISTRY.update({
+        "record_learning": tool_record_learning,
+        "get_learnings": tool_get_learnings,
+        "store_context": tool_store_context,
+        "recall_context": tool_recall_context,
+        "forget_context": tool_forget_context,
+        "record_learnings_batch": tool_record_learnings_batch,
+        "store_contexts_batch": tool_store_contexts_batch,
+    })
+    log_with_context(logger, "info", "Learning & Memory tools loaded (T006 refactor)", count=len(LEARNING_MEMORY_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Learning & Memory tools load failed", error=str(e))
+
+# T006: Identity Evolution Tools (extracted from inline)
+try:
+    from .tool_modules.identity_tools import (
+        IDENTITY_TOOLS,
+        tool_get_self_model,
+        tool_evolve_identity,
+        tool_log_experience,
+        tool_get_relationship,
+        tool_update_relationship,
+        tool_get_learning_patterns,
+        tool_record_session_learning,
+    )
+    TOOL_DEFINITIONS.extend(IDENTITY_TOOLS)
+    TOOL_REGISTRY.update({
+        "get_self_model": tool_get_self_model,
+        "evolve_identity": tool_evolve_identity,
+        "log_experience": tool_log_experience,
+        "get_relationship": tool_get_relationship,
+        "update_relationship": tool_update_relationship,
+        "get_learning_patterns": tool_get_learning_patterns,
+        "record_session_learning": tool_record_session_learning,
+    })
+    log_with_context(logger, "info", "Identity tools loaded (T006 refactor)", count=len(IDENTITY_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Identity tools load failed", error=str(e))
+
+# Phase 21: Tool Suggestions (2B - Smart Tool Discovery)
+try:
+    from .tool_modules.suggestion_tools import (
+        TOOLS as SUGGESTION_TOOLS,
+        get_tool_suggestions,
+        record_suggestion_feedback,
+        get_suggestion_stats,
+        list_underused_tools,
+    )
+    TOOL_DEFINITIONS.extend(SUGGESTION_TOOLS)
+    TOOL_REGISTRY.update({
+        "get_tool_suggestions": get_tool_suggestions,
+        "record_suggestion_feedback": record_suggestion_feedback,
+        "get_suggestion_stats": get_suggestion_stats,
+        "list_underused_tools": list_underused_tools,
+    })
+    log_with_context(logger, "info", "Tool Suggestion tools loaded (Phase 21 2B)", count=len(SUGGESTION_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Tool Suggestion tools load failed", error=str(e))
+
+# Phase 21: Tool Categories (2C - Tool Discovery by Category)
+try:
+    from .tool_modules.category_tools import (
+        TOOLS as CATEGORY_TOOLS,
+        list_category_tools,
+        get_tool_categories,
+        search_tools,
+        get_recommended_tools,
+    )
+    TOOL_DEFINITIONS.extend(CATEGORY_TOOLS)
+    TOOL_REGISTRY.update({
+        "list_category_tools": list_category_tools,
+        "get_tool_categories": get_tool_categories,
+        "search_tools": search_tools,
+        "get_recommended_tools": get_recommended_tools,
+    })
+    log_with_context(logger, "info", "Tool Category tools loaded (Phase 21 2C)", count=len(CATEGORY_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Tool Category tools load failed", error=str(e))
+
+# Phase 21: Self-Optimization (3C - Proactive Self-Monitoring)
+try:
+    from .tool_modules.self_optimization_tools import (
+        TOOLS as SELF_OPTIMIZATION_TOOLS,
+        run_self_optimization_analysis,
+        get_my_health_summary,
+        propose_self_improvement,
+        track_improvement_outcome,
+        get_improvement_history,
+    )
+    TOOL_DEFINITIONS.extend(SELF_OPTIMIZATION_TOOLS)
+    TOOL_REGISTRY.update({
+        "run_self_optimization_analysis": run_self_optimization_analysis,
+        "get_my_health_summary": get_my_health_summary,
+        "propose_self_improvement": propose_self_improvement,
+        "track_improvement_outcome": track_improvement_outcome,
+        "get_improvement_history": get_improvement_history,
+    })
+    log_with_context(logger, "info", "Self-Optimization tools loaded (Phase 21 3C)", count=len(SELF_OPTIMIZATION_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Self-Optimization tools load failed", error=str(e))
+
+# Phase 21: Advanced Reasoning (3B - Multi-Step Reasoning)
+try:
+    from .tool_modules.advanced_reasoning_tools import (
+        TOOLS as ADVANCED_REASONING_TOOLS,
+        decompose_complex_question,
+        execute_reasoning_plan,
+        reason_step_by_step,
+        validate_my_reasoning,
+    )
+    TOOL_DEFINITIONS.extend(ADVANCED_REASONING_TOOLS)
+    TOOL_REGISTRY.update({
+        "decompose_complex_question": decompose_complex_question,
+        "execute_reasoning_plan": execute_reasoning_plan,
+        "reason_step_by_step": reason_step_by_step,
+        "validate_my_reasoning": validate_my_reasoning,
+    })
+    log_with_context(logger, "info", "Advanced Reasoning tools loaded (Phase 21 3B)", count=len(ADVANCED_REASONING_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Advanced Reasoning tools load failed", error=str(e))
 
 
 def execute_tool(

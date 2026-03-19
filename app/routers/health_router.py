@@ -66,6 +66,128 @@ def _filter_log_lines(text: str, level: str) -> str:
     return "\n".join(lines)
 
 
+def _check_qdrant_ready() -> tuple[bool, Dict[str, Any]]:
+    """Fast Qdrant readiness check."""
+    try:
+        from qdrant_client import QdrantClient
+
+        qdrant_host = os.environ.get("QDRANT_HOST", "qdrant")
+        qdrant_port = int(os.environ.get("QDRANT_PORT", "6333"))
+        client = QdrantClient(host=qdrant_host, port=qdrant_port, timeout=3)
+        collections = client.get_collections()
+        return True, {
+            "status": "healthy",
+            "collections": len(collections.collections),
+            "host": f"{qdrant_host}:{qdrant_port}",
+        }
+    except Exception as e:
+        return False, {"status": "unhealthy", "error": str(e)}
+
+
+def _check_postgres_ready() -> tuple[bool, Dict[str, Any]]:
+    """Fast Postgres readiness check."""
+    try:
+        if knowledge_db.is_available():
+            return True, {"status": "healthy", "database": "jarvis"}
+        return False, {"status": "unhealthy", "error": "Connection failed"}
+    except Exception as e:
+        return False, {"status": "unhealthy", "error": str(e)}
+
+
+def _check_sqlite_ready() -> tuple[bool, Dict[str, Any]]:
+    """Fast SQLite readiness check."""
+    try:
+        from .. import state_db
+
+        state_db.list_sessions(limit=1)
+        return True, {"status": "healthy", "database": "jarvis_state.db"}
+    except Exception as e:
+        return False, {"status": "unhealthy", "error": str(e)}
+
+
+def _check_meilisearch_ready() -> tuple[bool, Dict[str, Any]]:
+    """Fast Meilisearch readiness check (warn-only for overall readiness)."""
+    try:
+        meili_health = meilisearch_client.health_check()
+        status = meili_health.get("status", "unknown")
+        is_healthy = status in {"healthy", "available"}
+        return is_healthy, meili_health
+    except Exception as e:
+        return False, {"status": "warning", "error": str(e)}
+
+
+def _collect_readiness_checks() -> tuple[bool, Dict[str, Any]]:
+    """Collect lightweight readiness checks for deploys and health probes."""
+    checks: Dict[str, Any] = {}
+    overall_ready = True
+
+    startup = global_state.get_startup_state()
+    startup_ready = bool(startup.get("ready"))
+    checks["startup"] = {
+        "status": "healthy" if startup_ready else "starting",
+        **startup,
+    }
+    if not startup_ready:
+        overall_ready = False
+
+    draining = global_state.get_pool_draining()
+    checks["request_acceptance"] = {
+        "status": "draining" if draining else "healthy",
+        "draining": draining,
+    }
+    if draining:
+        overall_ready = False
+
+    qdrant_ok, qdrant_payload = _check_qdrant_ready()
+    checks["qdrant"] = qdrant_payload
+    overall_ready = overall_ready and qdrant_ok
+
+    postgres_ok, postgres_payload = _check_postgres_ready()
+    checks["postgres"] = postgres_payload
+    overall_ready = overall_ready and postgres_ok
+
+    sqlite_ok, sqlite_payload = _check_sqlite_ready()
+    checks["sqlite"] = sqlite_payload
+    overall_ready = overall_ready and sqlite_ok
+
+    meili_ok, meili_payload = _check_meilisearch_ready()
+    checks["meilisearch"] = meili_payload
+    checks["meilisearch"]["blocks_readiness"] = False
+    checks["meilisearch"]["healthy"] = meili_ok
+
+    return overall_ready, checks
+
+
+@router.get("/livez")
+def livez():
+    """Cheap liveness probe: process is serving HTTP."""
+    startup = global_state.get_startup_state()
+    return {
+        "status": "alive",
+        "timestamp": datetime.utcnow().isoformat(),
+        "startup": startup,
+        "draining": global_state.get_pool_draining(),
+    }
+
+
+@router.get("/readyz")
+def readyz():
+    """Lightweight readiness probe for deploys and container health checks."""
+    overall_ready, checks = _collect_readiness_checks()
+    status_code = 200 if overall_ready else 503
+    payload = {
+        "status": "ready" if overall_ready else "not_ready",
+        "timestamp": datetime.utcnow().isoformat(),
+        "checks": checks,
+        "summary": {
+            "total_checks": len(checks),
+            "healthy": len([c for c in checks.values() if c.get("status") == "healthy"]),
+            "non_healthy": len([c for c in checks.values() if c.get("status") != "healthy"]),
+        },
+    }
+    return JSONResponse(status_code=status_code, content=payload)
+
+
 @router.get("/health")
 def health_check():
     """

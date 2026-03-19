@@ -8,12 +8,15 @@ Uses the data sources that actually exist in this codebase:
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+
+from prometheus_client import generate_latest
 
 try:
     import psutil
@@ -77,6 +80,115 @@ class SelfValidationService:
                 seen.add(key)
                 unique.append(candidate)
         return unique
+
+    def _action_queue_candidates(self) -> List[Path]:
+        candidates: List[Path] = []
+        env_path = os.environ.get("ACTION_QUEUE_PATH")
+        if env_path:
+            candidates.append(Path(env_path))
+        candidates.extend(
+            [
+                Path("/brain/system/data/action_queue"),
+                Path("/Volumes/BRAIN/system/data/action_queue"),
+            ]
+        )
+
+        unique: List[Path] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = str(candidate)
+            if key not in seen:
+                seen.add(key)
+                unique.append(candidate)
+        return unique
+
+    def _resolve_action_queue_path(self) -> Optional[Path]:
+        for candidate in self._action_queue_candidates():
+            if candidate.exists() and candidate.is_dir():
+                return candidate
+        return None
+
+    def _read_action_queue_records(self) -> List[Dict[str, Any]]:
+        base = self._resolve_action_queue_path()
+        if base is None:
+            return []
+
+        records: List[Dict[str, Any]] = []
+        for status_dir in ("approved", "rejected", "expired", "completed"):
+            current = base / status_dir
+            if not current.exists() or not current.is_dir():
+                continue
+            for file_path in current.glob("*.json"):
+                try:
+                    with open(file_path, "r", encoding="utf-8") as handle:
+                        records.append(json.load(handle))
+                except Exception as exc:
+                    logger.warning(f"Failed to parse action queue file {file_path}: {exc}")
+        return records
+
+    def _percentile(self, values: Sequence[float], q: float) -> Optional[float]:
+        if not values:
+            return None
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return ordered[0]
+        idx = int((len(ordered) - 1) * q)
+        idx = max(0, min(idx, len(ordered) - 1))
+        return ordered[idx]
+
+    def _agency_metrics_snapshot(self, hours: int) -> Dict[str, Optional[float]]:
+        cutoff = datetime.now() - timedelta(hours=hours)
+
+        latencies: List[float] = []
+        for action in self._read_action_queue_records():
+            created = self._parse_timestamp(action.get("created_at"))
+            if created is None:
+                continue
+            if created.tzinfo is not None:
+                created = created.replace(tzinfo=None)
+            if created < cutoff:
+                continue
+
+            decision = (
+                self._parse_timestamp(action.get("approved_at"))
+                or self._parse_timestamp(action.get("rejected_at"))
+                or self._parse_timestamp(action.get("expired_at"))
+            )
+            if decision is None:
+                continue
+            if decision.tzinfo is not None:
+                decision = decision.replace(tzinfo=None)
+            latency = (decision - created).total_seconds()
+            if latency >= 0:
+                latencies.append(latency)
+
+        approval_p95 = self._percentile(latencies, 0.95)
+
+        rollback_total = 0.0
+        applied_total = 0.0
+        try:
+            metrics_text = generate_latest().decode("utf-8", errors="replace")
+            for line in metrics_text.splitlines():
+                if line.startswith("jarvis_autonomous_rollbacks_total"):
+                    parts = line.rsplit(" ", 1)
+                    if len(parts) == 2:
+                        rollback_total += float(parts[1])
+                elif line.startswith("jarvis_autonomous_actions_total"):
+                    if 'status="completed"' in line or 'status="auto_approved"' in line or 'status="auto_approved_notify"' in line:
+                        parts = line.rsplit(" ", 1)
+                        if len(parts) == 2:
+                            applied_total += float(parts[1])
+        except Exception as exc:
+            logger.warning(f"Failed to read autonomy metrics from prometheus registry: {exc}")
+
+        rollback_rate = None
+        if applied_total > 0:
+            rollback_rate = rollback_total / applied_total
+
+        return {
+            "autonomy_rollback_rate": rollback_rate,
+            "approval_p95_seconds": approval_p95,
+        }
 
     def _resolve_state_db_path(self) -> Optional[Path]:
         for candidate in self._state_db_candidates():
@@ -255,6 +367,18 @@ class SelfValidationService:
         if score >= 25:
             return "Low effectiveness; timing or relevance should be tuned."
         return "Needs review; hints may be intrusive or irrelevant."
+
+    def _combine_statuses(self, statuses: Sequence[str]) -> str:
+        normalized = [status for status in statuses if status]
+        if not normalized:
+            return "no_data"
+        if any(status == "fail" for status in normalized):
+            return "fail"
+        if any(status == "warn" for status in normalized):
+            return "warn"
+        if any(status == "no_data" for status in normalized):
+            return "warn"
+        return "pass"
 
     # =========================================================================
     # Phase 1
@@ -1131,13 +1255,57 @@ class SelfValidationService:
 
         try:
             if not self._pg_table_exists("proactive_hints"):
-                return {
-                    "status": "no_data",
-                    "timestamp": datetime.now().isoformat(),
-                    "user_id": user_id,
-                    "period_hours": hours,
-                    "message": "proactive_hints table not found; this metric has no persisted source yet.",
-                }
+                try:
+                    from ..proactive_service import get_proactive_stats
+
+                    stats = get_proactive_stats()
+                    totals = stats.get("totals") or {}
+                    acceptance_rate = totals.get("acceptance_rate")
+                    if acceptance_rate is not None:
+                        acceptance_rate = round(float(acceptance_rate) * 100.0, 1)
+
+                    accepted = int(totals.get("accepted") or 0)
+                    ignored = int(totals.get("ignored") or 0)
+                    rejected = int(totals.get("rejected") or 0)
+                    shown = accepted + ignored + rejected
+                    avg_confidence = None
+
+                    if shown > 0:
+                        confidence = 50.0
+                        score = round(((acceptance_rate or 0.0) * 0.7) + (confidence * 0.3), 1)
+                    else:
+                        score = None
+
+                    return {
+                        "status": "success",
+                        "timestamp": datetime.now().isoformat(),
+                        "user_id": user_id,
+                        "period_hours": hours,
+                        "hint_stats": {
+                            "total_hints": int(totals.get("interventions") or 0),
+                            "shown": shown,
+                            "accepted": accepted,
+                            "rejected": rejected,
+                            "acceptance_rate": acceptance_rate,
+                            "avg_confidence": avg_confidence,
+                        },
+                        "type_distribution": {
+                            key: int((value or {}).get("interventions") or 0)
+                            for key, value in (stats.get("by_type") or {}).items()
+                        },
+                        "proactivity_score": score,
+                        "assessment": self._assess_proactivity(score),
+                        "data_source": "proactive_service_memory",
+                    }
+                except Exception as exc:
+                    logger.warning(f"Proactive fallback metrics unavailable: {exc}")
+                    return {
+                        "status": "no_data",
+                        "timestamp": datetime.now().isoformat(),
+                        "user_id": user_id,
+                        "period_hours": hours,
+                        "message": "proactive_hints table not found and in-memory fallback unavailable.",
+                    }
 
             params: List[Any] = [cutoff]
             user_filter = ""
@@ -1293,6 +1461,243 @@ class SelfValidationService:
             "proactivity": self.proactivity_score(user_id=None, hours=168),
             "continuity_test_hint": "Use /self/continuity/{user_id} for user-specific continuity checks.",
         }
+
+    def reality_check_snapshot(
+        self,
+        hours: int = 168,
+        days: int = 7,
+        user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return deploy-time KPI snapshot for agency/memory/proactive/calibration."""
+        try:
+            continuity_score: Optional[float] = None
+            continuity_status = "no_data"
+            continuity_payload: Dict[str, Any] = {
+                "status": "no_data",
+                "value": None,
+                "thresholds": {"pass": ">=60", "warn": ">=40", "fail": "<40"},
+            }
+
+            if user_id is not None:
+                continuity = self.conversation_continuity_test(user_id)
+                if continuity.get("status") == "success":
+                    raw_value = continuity.get("continuity_score_percent")
+                    continuity_score = float(raw_value) if raw_value is not None else None
+                    if continuity_score is not None:
+                        if continuity_score >= 60:
+                            continuity_status = "pass"
+                        elif continuity_score >= 40:
+                            continuity_status = "warn"
+                        else:
+                            continuity_status = "fail"
+                    continuity_payload = {
+                        "status": continuity_status,
+                        "value": continuity_score,
+                        "thresholds": {"pass": ">=60", "warn": ">=40", "fail": "<40"},
+                    }
+
+            diagnostics = self.memory_diagnostics()
+            memory_health_value = 1.0 if diagnostics.get("status") == "success" else 0.0
+            memory_health_status = "pass" if memory_health_value == 1.0 else "fail"
+
+            proactive = self.proactivity_score(user_id=user_id, hours=hours)
+            proactive_acceptance: Optional[float] = None
+            proactive_score_value: Optional[float] = None
+            proactive_acceptance_status = "no_data"
+            proactive_score_status = "no_data"
+            if proactive.get("status") == "success":
+                hint_stats = proactive.get("hint_stats") or {}
+                raw_acceptance = hint_stats.get("acceptance_rate")
+                raw_score = proactive.get("proactivity_score")
+                proactive_acceptance = float(raw_acceptance) if raw_acceptance is not None else None
+                proactive_score_value = float(raw_score) if raw_score is not None else None
+
+                if proactive_acceptance is not None:
+                    if proactive_acceptance >= 35:
+                        proactive_acceptance_status = "pass"
+                    elif proactive_acceptance >= 20:
+                        proactive_acceptance_status = "warn"
+                    else:
+                        proactive_acceptance_status = "fail"
+
+                if proactive_score_value is not None:
+                    if proactive_score_value >= 55:
+                        proactive_score_status = "pass"
+                    elif proactive_score_value >= 35:
+                        proactive_score_status = "warn"
+                    else:
+                        proactive_score_status = "fail"
+
+            agency_snapshot = self._agency_metrics_snapshot(hours=hours)
+            rollback_rate = agency_snapshot.get("autonomy_rollback_rate")
+            rollback_status = "no_data"
+            if rollback_rate is not None:
+                if rollback_rate <= 0.05:
+                    rollback_status = "pass"
+                elif rollback_rate <= 0.10:
+                    rollback_status = "warn"
+                else:
+                    rollback_status = "fail"
+
+            approval_p95 = agency_snapshot.get("approval_p95_seconds")
+            approval_status = "no_data"
+            if approval_p95 is not None:
+                if approval_p95 <= 3600:
+                    approval_status = "pass"
+                elif approval_p95 <= 14400:
+                    approval_status = "warn"
+                else:
+                    approval_status = "fail"
+
+            from ..uncertainty_quantifier import get_uncertainty_quantifier
+
+            quantifier = get_uncertainty_quantifier()
+            calibration_report = quantifier.get_calibration_report()
+            ece_value = calibration_report.get("overall_ece")
+            if ece_value is not None:
+                ece_value = float(ece_value)
+
+            calibration_ece_status = "no_data"
+            if ece_value is not None:
+                if ece_value <= 0.15:
+                    calibration_ece_status = "pass"
+                elif ece_value <= 0.20:
+                    calibration_ece_status = "warn"
+                else:
+                    calibration_ece_status = "fail"
+
+            seven_day_cutoff = datetime.now() - timedelta(days=days)
+            outcome_entries = 0
+            for entry in quantifier.history:
+                ts = self._parse_timestamp(entry.get("timestamp"))
+                if ts is None:
+                    continue
+                if ts.tzinfo is not None:
+                    ts = ts.replace(tzinfo=None)
+                if ts >= seven_day_cutoff:
+                    outcome_entries += 1
+
+            total_assessments = 0
+            try:
+                if self._pg_table_exists("message"):
+                    with safe_aggregate_query("message") as cur:
+                        cur.execute(
+                            """
+                            SELECT COUNT(*) AS total
+                            FROM message
+                            WHERE created_at > %s
+                              AND role = 'assistant'
+                            """,
+                            (seven_day_cutoff,),
+                        )
+                        row = cur.fetchone()
+                        total_assessments = int(row["total"] or 0)
+            except Exception as exc:
+                logger.warning(f"Failed to calculate confidence feedback denominator: {exc}")
+
+            coverage_value = None
+            coverage_status = "no_data"
+            if total_assessments > 0:
+                coverage_value = round((outcome_entries / total_assessments) * 100.0, 1)
+                if coverage_value >= 30:
+                    coverage_status = "pass"
+                elif coverage_value >= 15:
+                    coverage_status = "warn"
+                else:
+                    coverage_status = "fail"
+
+            agency_metrics = {
+                "autonomy_rollback_rate": {
+                    "status": rollback_status,
+                    "value": rollback_rate,
+                    "thresholds": {"pass": "<=0.05", "warn": "<=0.10", "fail": ">0.10"},
+                },
+                "approval_p95_seconds": {
+                    "status": approval_status,
+                    "value": approval_p95,
+                    "thresholds": {"pass": "<=3600", "warn": "<=14400", "fail": ">14400"},
+                },
+            }
+
+            memory_metrics = {
+                "continuity_score_percent": continuity_payload,
+                "memory_health": {
+                    "status": memory_health_status,
+                    "value": int(memory_health_value),
+                    "thresholds": {"pass": "1", "fail": "0"},
+                },
+            }
+
+            proactive_metrics = {
+                "proactivity_acceptance_rate": {
+                    "status": proactive_acceptance_status,
+                    "value": proactive_acceptance,
+                    "thresholds": {"pass": ">=35", "warn": ">=20", "fail": "<20"},
+                },
+                "proactivity_score": {
+                    "status": proactive_score_status,
+                    "value": proactive_score_value,
+                    "thresholds": {"pass": ">=55", "warn": ">=35", "fail": "<35"},
+                },
+            }
+
+            calibration_metrics = {
+                "calibration_ece": {
+                    "status": calibration_ece_status,
+                    "value": ece_value,
+                    "thresholds": {"pass": "<=0.15", "warn": "<=0.20", "fail": ">0.20"},
+                },
+                "confidence_feedback_coverage": {
+                    "status": coverage_status,
+                    "value": coverage_value,
+                    "thresholds": {"pass": ">=30", "warn": ">=15", "fail": "<15"},
+                },
+            }
+
+            dimensions = {
+                "agency": {
+                    "status": self._combine_statuses([metric["status"] for metric in agency_metrics.values()]),
+                    "metrics": agency_metrics,
+                },
+                "memory": {
+                    "status": self._combine_statuses([metric["status"] for metric in memory_metrics.values()]),
+                    "metrics": memory_metrics,
+                },
+                "proactive": {
+                    "status": self._combine_statuses([metric["status"] for metric in proactive_metrics.values()]),
+                    "metrics": proactive_metrics,
+                },
+                "calibration": {
+                    "status": self._combine_statuses([metric["status"] for metric in calibration_metrics.values()]),
+                    "metrics": calibration_metrics,
+                },
+            }
+
+            overall = self._combine_statuses([payload["status"] for payload in dimensions.values()])
+
+            return {
+                "status": "success",
+                "timestamp": datetime.now().isoformat(),
+                "period_hours": hours,
+                "period_days": days,
+                "user_id": user_id,
+                "overall": overall,
+                "dimensions": dimensions,
+            }
+        except Exception as exc:
+            logger.error(f"Reality check snapshot failed: {exc}")
+            return {
+                "status": "error",
+                "timestamp": datetime.now().isoformat(),
+                "error": str(exc),
+                "overall": "fail",
+                "dimensions": {
+                    "agency": {"status": "fail", "metrics": {}},
+                    "memory": {"status": "fail", "metrics": {}},
+                    "proactive": {"status": "fail", "metrics": {}},
+                    "calibration": {"status": "fail", "metrics": {}},
+                },
+            }
 
 
 _service_instance: Optional[SelfValidationService] = None

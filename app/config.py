@@ -133,7 +133,7 @@ FAST_MODEL = os.getenv("JARVIS_FAST_MODEL", "claude-haiku-4-5")
 LLM_ROUTER_ENABLED = os.getenv("JARVIS_LLM_ROUTER_ENABLED", "true").lower() == "true"
 
 # Optional: Override default provider routing
-PREFERRED_PROVIDER = os.getenv("JARVIS_PREFERRED_PROVIDER", "anthropic")  # "anthropic" or "openai"
+PREFERRED_PROVIDER = os.getenv("JARVIS_PREFERRED_PROVIDER", "anthropic")  # "anthropic", "openai", or "ollama"
 
 # LLM circuit breaker (prevents cascading failures on transient provider outages)
 LLM_CIRCUIT_BREAKER_ENABLED = os.getenv("JARVIS_LLM_CIRCUIT_BREAKER_ENABLED", "true").lower() in ("1", "true", "yes", "on")
@@ -205,6 +205,8 @@ PUBLIC_ENDPOINTS = [
     "/health",
     "/health/quick",
     "/health/detailed",
+    "/livez",
+    "/readyz",
     "/auth/status",
     "/openapi.json",
     "/docs",

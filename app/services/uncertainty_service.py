@@ -443,7 +443,7 @@ class UncertaintyService:
                 for gap in knowledge_gaps:
                     self._track_knowledge_gap(cur, gap)
 
-                return result[0] if result else None
+                return result["id"] if result else None
 
         except Exception as e:
             self.logger.warning(f"Failed to log assessment: {e}")
@@ -600,7 +600,8 @@ class UncertaintyService:
                 if not result:
                     return {"success": False, "error": "Assessment not found"}
 
-                confidence, category = result
+                confidence = result["overall_confidence"]
+                category = result["confidence_category"]
 
                 # Update the assessment
                 calibration_score = 1.0 if was_correct else 0.0

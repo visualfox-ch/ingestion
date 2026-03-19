@@ -14,6 +14,7 @@ from typing import List, Dict, Any, Optional
 import anthropic
 
 from .tools import get_tool_definitions, execute_tool
+from .agent_defaults import DEFAULT_AGENT_MODEL
 from .observability import get_logger, log_with_context, metrics, retry_with_backoff, tool_loop_detector
 from .langfuse_integration import observe, langfuse_context, langfuse_attribute_scope
 from .roles import get_role, build_system_prompt, detect_role, ROLES
@@ -22,6 +23,12 @@ from .memory import MemoryStore, StateInference
 from .agent_state import AgentState
 from .context_builder import ContextBuilder
 from .tool_executor import ToolExecutor
+from .agent_provider_loop import (
+    ProviderToolLoopState,
+    get_provider_tool_loop_adapter,
+    normalize_anthropic_response,
+    normalize_model_router_response,
+)
 from .response_builder import ResponseBuilder, build_explanation, format_explanation_text
 from .diff_gate import DiffGateValidator, CodeChange
 from .risk_models import RiskClass
@@ -39,6 +46,7 @@ from .services.llm_optimizations import (
     create_optimized_stream_callback,
     invalidate_tool_cache
 )
+from .utils.timezone import get_timezone
 
 logger = get_logger("jarvis.agent")
 
@@ -59,6 +67,13 @@ try:
     _REASONING_OBSERVABILITY = True
 except ImportError:
     _REASONING_OBSERVABILITY = False
+
+# Phase A: Auto-Hooks (Tool Activation Strategy)
+try:
+    from .services.agent_hooks import AgentHooks, get_agent_hooks
+    _AGENT_HOOKS_ENABLED = True
+except ImportError:
+    _AGENT_HOOKS_ENABLED = False
 
 
 # T-005: Simple query complexity classifier for model routing
@@ -508,6 +523,11 @@ def get_max_tool_rounds() -> int:
     """Get max rounds from live config (allows runtime changes without deploy)."""
     return get_config("agent_max_rounds", CONFIG_MAX_ROUNDS or 8)
 
+
+def get_provider_agnostic_tool_loop_enabled() -> bool:
+    """Feature flag for the shared Anthropic/OpenAI tool loop."""
+    return bool(get_config("agent_provider_agnostic_tool_loop_enabled", False))
+
 MAX_TOOL_ROUNDS = CONFIG_MAX_ROUNDS or 8  # Fallback for module-level access
 
 
@@ -868,7 +888,7 @@ def run_agent(
     conversation_history: List[Dict[str, str]] = None,
     namespace: str = "work_projektil",
     scope: Optional[ScopeRef] = None,
-    model: str = "claude-sonnet-4-6",
+    model: str = DEFAULT_AGENT_MODEL,
     max_tokens: int = 1024,
     role: str = "assistant",
     auto_detect_role: bool = False,
@@ -914,7 +934,6 @@ def run_agent(
     timeout_hit = False
     # Read max_rounds from live config (allows runtime changes without deploy)
     max_rounds_env = get_max_tool_rounds()
-    log_with_context(logger, "info", "DEBUG: max_rounds config", live_config_value=max_rounds_env, param_value=max_rounds)
     max_rounds_value = max_rounds if max_rounds is not None else max_rounds_env
 
     # Langfuse attribute propagation (best-effort; no-op if unsupported)
@@ -1057,16 +1076,44 @@ def run_agent(
         except Exception as e:
             log_with_context(logger, "warning", "Bulk MD memory sync fast-path failed, falling back to normal flow", error=str(e))
     
+    # ========== PHASE A: PRE-QUERY HOOKS (Tool Activation Strategy) ==========
+    # Auto-call check_corrections before processing query
+    corrections_hint = None
+    if _AGENT_HOOKS_ENABLED:
+        try:
+            hooks = get_agent_hooks(user_id=user_id, session_id=session_id)
+            hook_result = hooks.pre_query(query)
+            if hook_result.success and hook_result.data.get("count", 0) > 0:
+                corrections_hint = hook_result.data.get("apply_hint")
+                log_with_context(logger, "info", "Pre-query hook applied corrections",
+                               count=hook_result.data.get("count"))
+        except Exception as e:
+            log_with_context(logger, "debug", "Pre-query hook failed (non-critical)", error=str(e))
+
     # ========== MULTI-MODEL ROUTING (Phase 21 - OpenAI + Anthropic) ==========
     # Database-driven model selection:
     # - Default: cheapest model (gpt-4o-mini) for simple tasks
     # - Task-aware: selects best model based on query type + complexity
     # - Jarvis can override mappings via tools
-    DEFAULT_MODEL = "claude-sonnet-4-6"
+    DEFAULT_MODEL = DEFAULT_AGENT_MODEL
     original_model = model
     selected_provider = Provider.ANTHROPIC  # Default provider
     model_selection = None
     effort_level = "medium"  # Default effort level
+    provider_agnostic_tool_loop_requested = get_provider_agnostic_tool_loop_enabled()
+    provider_agnostic_tool_loop_disabled_reason = None
+    if provider_agnostic_tool_loop_requested and stream_callback:
+        provider_agnostic_tool_loop_disabled_reason = "streaming_not_supported"
+    elif provider_agnostic_tool_loop_requested and images:
+        provider_agnostic_tool_loop_disabled_reason = "vision_not_supported"
+    provider_agnostic_tool_loop_enabled = (
+        provider_agnostic_tool_loop_requested
+        and provider_agnostic_tool_loop_disabled_reason is None
+    )
+    preferred_provider = get_config(
+        "llm_preferred_provider",
+        os.environ.get("JARVIS_PREFERRED_PROVIDER", Provider.ANTHROPIC.value),
+    )
 
     multi_model_enabled = os.environ.get("MULTI_MODEL_ENABLED", "true").lower() == "true"
 
@@ -1074,9 +1121,14 @@ def run_agent(
         if multi_model_enabled and model == DEFAULT_MODEL:
             # Use dynamic router (reads patterns from database)
             dynamic_router = get_dynamic_model_router()
-            # Force Anthropic provider - agent loop only supports Anthropic client
-            # OpenAI models can be used via dedicated tools for specific tasks
-            model_selection = dynamic_router.select_model(query, force_provider="anthropic")
+            force_provider = "anthropic"
+            if provider_agnostic_tool_loop_enabled:
+                force_provider = (
+                    preferred_provider
+                    if preferred_provider in (Provider.ANTHROPIC.value, Provider.OPENAI.value, Provider.OLLAMA.value)
+                    else None
+                )
+            model_selection = dynamic_router.select_model(query, force_provider=force_provider)
 
             model = model_selection.model_id
             selected_provider = Provider(model_selection.provider.value)
@@ -1207,6 +1259,11 @@ def run_agent(
     # Build system prompt from role
     system_prompt = build_system_prompt(None, role_config)  # Will use role's prompt
 
+    # Phase A: Inject corrections from pre-query hook
+    if corrections_hint:
+        system_prompt += f"\n\n## Wichtige Korrekturen (aus vergangenen Sessions):\n{corrections_hint}"
+        log_with_context(logger, "debug", "Corrections injected into system prompt")
+
     log_with_context(logger, "info", "Agent started",
                     query=query[:100], model=model, role=role)
     metrics.inc("agent_runs")
@@ -1237,7 +1294,40 @@ def run_agent(
     except Exception as e:
         log_with_context(logger, "debug", "Capabilities check skipped", error=str(e))
 
-    client = get_client()
+    provider_tool_loop_router = None
+    provider_tool_loop_state = ProviderToolLoopState(provider=selected_provider.value)
+    provider_tool_loop_active = False
+    provider_tool_loop_reason = provider_agnostic_tool_loop_disabled_reason
+    provider_tool_loop_model_config = None
+
+    if provider_agnostic_tool_loop_enabled:
+        try:
+            from .model_router import resolve_model_config
+
+            provider_tool_loop_model_config = resolve_model_config(model)
+            if provider_tool_loop_model_config is not None:
+                provider_tool_loop_router = get_router(multi_model_enabled=True)
+                provider_tool_loop_active = True
+            else:
+                provider_tool_loop_reason = f"model_not_supported:{model}"
+        except Exception as e:
+            provider_tool_loop_reason = str(e)
+
+    log_with_context(
+        logger,
+        "info",
+        "Provider tool loop configuration",
+        tool_loop_phase="init",
+        requested=provider_agnostic_tool_loop_requested,
+        enabled=provider_agnostic_tool_loop_enabled,
+        active=provider_tool_loop_active,
+        selected_provider=selected_provider.value,
+        preferred_provider=preferred_provider,
+        model=model,
+        reason=provider_tool_loop_reason,
+    )
+
+    client = None if provider_tool_loop_active else get_client()
     
     # ========== TOOL SELECTION (T-023 Round 6 Phase A - Tool Selector) ==========
     # Feb 3, 2026: Filter tools based on query class + keywords
@@ -1302,13 +1392,9 @@ def run_agent(
     try:
         from .services.tool_autonomy import get_tool_autonomy_service
         from datetime import datetime
-        try:
-            from zoneinfo import ZoneInfo
-        except ImportError:
-            from backports.zoneinfo import ZoneInfo
 
         autonomy_service = get_tool_autonomy_service()
-        now = datetime.now(ZoneInfo("Europe/Zurich"))
+        now = datetime.now(get_timezone("Europe/Zurich"))
 
         # Build context for rule matching
         rule_context = {
@@ -1701,6 +1787,35 @@ Du hast Zugriff auf {len(tool_names)} Tools.
     except Exception as e:
         log_with_context(logger, "debug", "Correction check failed", error=str(e))
 
+    # === CONTEXT-SENSITIVE TOOL SUGGESTIONS (Phase 21A) ===
+    # Recommend tools based on learned context patterns
+    try:
+        from .services.contextual_tool_router import get_contextual_tool_router
+        tool_router = get_contextual_tool_router()
+        tool_recommendation = tool_router.route_tool(
+            query=query,
+            context={
+                "session_type": context_result.session_type if hasattr(context_result, 'session_type') else None,
+                "recent_tools": context_result.recent_tools if hasattr(context_result, 'recent_tools') else []
+            }
+        )
+        if tool_recommendation.get("success") and tool_recommendation.get("recommended_tool"):
+            tool_hint = f"\n\n## Tool-Empfehlung (basierend auf Kontext)\n"
+            tool_hint += f"- **Empfohlen:** {tool_recommendation['recommended_tool']}"
+            if tool_recommendation.get("confidence"):
+                tool_hint += f" (Konfidenz: {tool_recommendation['confidence']:.0%})"
+            tool_hint += "\n"
+            if tool_recommendation.get("alternatives"):
+                tool_hint += f"- Alternativen: {', '.join(tool_recommendation['alternatives'][:2])}\n"
+            if tool_recommendation.get("context_match"):
+                tool_hint += f"- Grund: {tool_recommendation['context_match']}\n"
+            system_prompt = system_prompt + tool_hint
+            log_with_context(logger, "info", "Tool recommendation injected",
+                           tool=tool_recommendation['recommended_tool'],
+                           routing_type=tool_recommendation.get('routing_type'))
+    except Exception as e:
+        log_with_context(logger, "debug", "Tool routing check failed", error=str(e))
+
     # Handle role override from context (e.g., auto-coach mode)
     if context_result.role_override:
         role = context_result.role_override
@@ -1818,16 +1933,61 @@ Du hast Zugriff auf {len(tool_names)} Tools.
         log_with_context(logger, "debug", f"Agent round {round_num + 1}")
 
         try:
-            response = _call_claude(
-                client, model, messages, tools, max_tokens, system_prompt,
-                stream_callback=stream_callback,
-                effort=effort_level  # Tier 4: Pass effort for latency optimization
-            )
+            if provider_tool_loop_active and provider_tool_loop_router is not None:
+                log_with_context(
+                    logger,
+                    "info",
+                    "Provider tool loop round started",
+                    tool_loop_phase="llm_call_start",
+                    round=round_num + 1,
+                    provider=provider_tool_loop_state.provider,
+                    model=model,
+                    router_model=provider_tool_loop_model_config.model_id if provider_tool_loop_model_config else None,
+                    previous_response_id=bool(provider_tool_loop_state.previous_response_id),
+                )
+                router_response = provider_tool_loop_router.execute_with_fallback(
+                    provider_tool_loop_model_config,
+                    messages,
+                    system_prompt,
+                    tools,
+                    max_tokens,
+                    previous_response_id=provider_tool_loop_state.previous_response_id,
+                )
+                response = normalize_model_router_response(router_response)
+                adapter = get_provider_tool_loop_adapter(response.provider)
+                adapter.apply_response_state(response, provider_tool_loop_state)
+                log_with_context(
+                    logger,
+                    "info",
+                    "Provider tool loop round completed",
+                    tool_loop_phase="llm_call_complete",
+                    round=round_num + 1,
+                    provider=response.provider,
+                    model=response.model,
+                    stop_reason=response.stop_reason,
+                )
+            else:
+                response = normalize_anthropic_response(
+                    _call_claude(
+                        client,
+                        model,
+                        messages,
+                        tools,
+                        max_tokens,
+                        system_prompt,
+                        stream_callback=stream_callback,
+                        effort=effort_level,
+                    ),
+                    model=model,
+                )
+                provider_tool_loop_state.provider = Provider.ANTHROPIC.value
+                provider_tool_loop_state.previous_response_id = None
         except Exception as e:
             log_with_context(logger, "error", "Agent API call failed", error=str(e))
             metrics.inc("agent_errors")
             raise
 
+        state.model = response.model
         total_input_tokens += response.usage.input_tokens
         total_output_tokens += response.usage.output_tokens
         # Phase 1.5: Also track in AgentState
@@ -1853,8 +2013,8 @@ Du hast Zugriff auf {len(tool_names)} Tools.
             if _TRACK_COSTS:
                 try:
                     record_api_cost(
-                        model=model,
-                        provider="anthropic",
+                        model=response.model,
+                        provider=response.provider,
                         feature="agent",
                         tokens_in=total_input_tokens,
                         tokens_out=total_output_tokens,
@@ -1890,6 +2050,8 @@ Du hast Zugriff auf {len(tool_names)} Tools.
 
             # Build response from AgentState (includes facette info)
             response_data = state.to_response_dict()
+            response_data["provider"] = response.provider
+            response_data["model"] = response.model
             log_with_context(logger, "info", "Response built from state",
                            request_id=state.request_id,
                            has_facette_weights=("facette_weights" in response_data),
@@ -1985,7 +2147,11 @@ Du hast Zugriff auf {len(tool_names)} Tools.
                     query=query,
                     tool_calls=all_tool_calls,
                     final_answer=response_data.get("answer", ""),
-                    success=True  # end_turn means successful completion
+                    success=True,  # end_turn means successful completion
+                    user_id=str(user_id) if user_id else None,
+                    session_id=session_id or (state.request_id if state else None),
+                    namespace=namespace,
+                    source="agent",
                 )
                 if learnings.get("tool_usage_logged", 0) > 0:
                     log_with_context(logger, "debug", "Auto-learning completed",
@@ -2008,11 +2174,6 @@ Du hast Zugriff auf {len(tool_names)} Tools.
                         if msg.get("role") == "assistant":
                             last_response = msg.get("content", "")
                             break
-
-                log_with_context(logger, "debug", "Correction detection check",
-                               has_history=bool(conversation_history),
-                               has_last_response=bool(last_response),
-                               query_preview=query[:50] if query else None)
 
                 if last_response:
                     # Check if current query is a correction
@@ -2094,9 +2255,22 @@ Du hast Zugriff auf {len(tool_names)} Tools.
                 # Also track in AgentState
                 state.add_tool_call(ex.tool_name, ex.input, ex.result, ex.result_summary)
 
-            # Add messages for next Claude call
-            messages.append({"role": "assistant", "content": batch_result.assistant_content})
-            messages.append({"role": "user", "content": batch_result.tool_results})
+            adapter = get_provider_tool_loop_adapter(response.provider)
+            messages = adapter.append_followup_messages(
+                messages,
+                batch_result.assistant_content,
+                batch_result.tool_results,
+            )
+            log_with_context(
+                logger,
+                "info",
+                "Provider tool loop follow-up prepared",
+                tool_loop_phase="followup_messages",
+                round=round_num + 1,
+                provider=response.provider,
+                assistant_blocks=len(batch_result.assistant_content),
+                tool_results=len(batch_result.tool_results),
+            )
 
         else:
             # Unexpected stop reason
@@ -2120,7 +2294,8 @@ Du hast Zugriff auf {len(tool_names)} Tools.
             "answer": "I apologize, but I wasn't able to complete the task within the allowed time. Please try rephrasing your question.",
             "tool_calls": all_tool_calls,
             "rounds": round_num,
-            "model": model,
+            "model": state.model,
+            "provider": provider_tool_loop_state.provider,
             "role": role,
             "persona_id": persona_id,
             "usage": {
@@ -2234,7 +2409,8 @@ Du hast Zugriff auf {len(tool_names)} Tools.
         "answer": answer_text,
         "tool_calls": all_tool_calls,
         "rounds": max_rounds_value,
-        "model": model,
+        "model": state.model,
+        "provider": provider_tool_loop_state.provider,
         "role": role,
         "persona_id": persona_id,
         "usage": {
@@ -2252,7 +2428,11 @@ Du hast Zugriff auf {len(tool_names)} Tools.
             query=query,
             tool_calls=all_tool_calls,
             final_answer=answer_text,
-            success=False  # Mark as partial completion
+            success=False,  # Mark as partial completion
+            user_id=str(user_id) if user_id else None,
+            session_id=state.session_id if state else None,
+            namespace=namespace,
+            source="agent",
         )
         if learnings.get("tool_usage_logged", 0) > 0:
             log_with_context(logger, "debug", "Auto-learning (max_rounds)",
@@ -2353,6 +2533,27 @@ Du hast Zugriff auf {len(tool_names)} Tools.
         except Exception as e:
             log_with_context(logger, "warning", "Failed to log decision for cross-session learning",
                            error=str(e))
+
+    # ========== PHASE A: POST-RESPONSE HOOKS (Tool Activation Strategy) ==========
+    # Auto-call assess_my_confidence after generating response
+    if _AGENT_HOOKS_ENABLED:
+        try:
+            hooks = get_agent_hooks(user_id=user_id, session_id=session_id)
+            answer_text = response_data.get("answer", "")
+            hook_result = hooks.post_response(
+                query=query,
+                response=answer_text,
+                tool_calls=all_tool_calls
+            )
+            if hook_result.success and not hook_result.skipped:
+                confidence = hook_result.data.get("confidence", 0.0)
+                response_data["auto_confidence"] = confidence
+                if confidence < 0.5:
+                    log_with_context(logger, "info", "Low confidence response detected",
+                                   confidence=confidence,
+                                   signals=hook_result.data.get("uncertainty_signals", []))
+        except Exception as e:
+            log_with_context(logger, "debug", "Post-response hook failed (non-critical)", error=str(e))
 
     # Track value created (ClawWork economic accountability)
     log_with_context(logger, "debug", "Starting economic value tracking")

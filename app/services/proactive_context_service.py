@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 import json
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class ProactiveContextService:
     def _ensure_tables(self):
         """Ensure context tracking tables exist."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS context_load_history (
                         id SERIAL PRIMARY KEY,
@@ -154,7 +154,7 @@ class ProactiveContextService:
             for ctx in needed[:5]:  # Limit to top 5 context types
                 ctx_type = ctx['type']
                 try:
-                    with get_cursor() as cur:
+                    with get_dict_cursor() as cur:
                         if ctx_type == 'user_preferences':
                             loaded_context['context']['preferences'] = \
                                 self._load_user_preferences(cur, user_id, max_items_per_type)
@@ -180,7 +180,7 @@ class ProactiveContextService:
             # Load session context
             if session_type:
                 try:
-                    with get_cursor() as cur:
+                    with get_dict_cursor() as cur:
                         loaded_context['context']['session'] = \
                             self._load_session_context(cur, session_type)
                 except Exception as sess_err:
@@ -188,7 +188,7 @@ class ProactiveContextService:
 
             # Record what we loaded (non-critical)
             try:
-                with get_cursor() as cur:
+                with get_dict_cursor() as cur:
                     self._record_context_load(cur, query, loaded_context)
             except Exception as rec_err:
                 logger.debug(f"Failed to record context load: {rec_err}")
@@ -371,7 +371,7 @@ class ProactiveContextService:
             import hashlib
             query_hash = hashlib.md5(query.encode()).hexdigest()
 
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Update history
                 cur.execute("""
                     UPDATE context_load_history
@@ -404,7 +404,7 @@ class ProactiveContextService:
     def get_context_stats(self) -> Dict[str, Any]:
         """Get statistics on context loading effectiveness."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     SELECT context_type,
                            SUM(times_loaded) as total_loaded,

@@ -22,6 +22,16 @@ from .. import config, metrics
 router = APIRouter(prefix="/scan", tags=["scan"])
 logger = get_logger("jarvis.scan")
 
+# Temporary compatibility bridge for the current scan pipeline.
+# /scan/folder accepts ScopeRef at the API layer, but downstream storage
+# still writes into namespace-scoped collections.
+SCAN_SCOPE_TO_NAMESPACE = {
+    ("personal", "private"): "private",
+    ("projektil", "internal"): "work_projektil",
+    ("visualfox", "internal"): "work_visualfox",
+    ("personal", "shared"): "shared",
+}
+
 # Supported file extensions for document ingestion
 SUPPORTED_EXTENSIONS = {
     ".txt": "text",
@@ -74,8 +84,21 @@ class FolderScanRequest(BaseModel):
         )
 
     def get_namespace(self) -> str:
-        """Return the effective legacy namespace for backward-compatible code paths."""
-        return self.get_scope().to_legacy_namespace()
+        """Return the effective legacy namespace for the current scan pipeline."""
+        if self.namespace is not None and str(self.namespace).strip():
+            return str(self.namespace).strip()
+
+        scope = self.get_scope()
+        namespace = SCAN_SCOPE_TO_NAMESPACE.get((scope.org, scope.visibility))
+        if namespace:
+            return namespace
+
+        raise ValueError(
+            "Unsupported scan scope "
+            f"{scope.org}/{scope.visibility}. "
+            "Supported scope pairs are: personal/private, projektil/internal, "
+            "visualfox/internal, personal/shared."
+        )
 
 
 class FolderScanResult(BaseModel):
@@ -209,8 +232,11 @@ async def scan_folder(
     start_time = time.time()
 
     # Resolve scope and namespace (dual-mode support)
-    request_scope = request.get_scope()
-    effective_namespace = request.get_namespace()
+    try:
+        request_scope = request.get_scope()
+        effective_namespace = request.get_namespace()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     raw_namespace = (request.namespace or "").strip()
     if request.scope is not None:
         input_mode = "scope"
@@ -342,6 +368,10 @@ async def scan_folder(
             meta = {
                 "source_path": str(filepath),
                 "namespace": effective_namespace,
+                "scope_org": request_scope.org,
+                "scope_visibility": request_scope.visibility,
+                "scope_domain": request_scope.domain,
+                "scope_owner": request_scope.owner,
                 "source_type": request.source_type,
                 "doc_type": doc_type,
                 "filename": filepath.name,
@@ -361,7 +391,7 @@ async def scan_folder(
             # Update upload status
             knowledge_db.update_upload_status(
                 upload_id=upload_id,
-                status="processed"
+                status="done"
             )
 
             # Move to archive if configured

@@ -13,10 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 Any = Any  # Re-export for Depends type hint
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
+from fastapi.responses import JSONResponse
 from ..rate_limiter import rate_limit_dependency
 from ..observability import get_logger
+from ..metrics import CALENDAR_EVENTS_ALIAS_REQUESTS_TOTAL
+from ..jobs.alias_sunset_job import is_sunsetted, record_alias_call
 
 logger = get_logger("jarvis.n8n")
 router = APIRouter(prefix="/n8n", tags=["n8n"])
@@ -129,6 +132,73 @@ def n8n_calendar_week():
         "count": len(events),
         "timeframe": "week",
         "formatted": n8n_client.format_events_for_briefing(events, include_date=True)
+    }
+
+
+def _parse_event_dt(raw_value: Optional[str]) -> Optional[datetime]:
+    """Parse event date/datetime into UTC datetime for lightweight window filtering."""
+    if not raw_value:
+        return None
+
+    value = str(raw_value).strip()
+    if not value:
+        return None
+
+    try:
+        if len(value) == 10:
+            # Date-only events use YYYY-MM-DD; treat as UTC midnight.
+            return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+@router.get("/calendar/events")
+def n8n_calendar_events(hours: int = 24, account: str = "all"):
+    """Backward-compatible calendar events endpoint (legacy callers use hours window)."""
+    if is_sunsetted():
+        return JSONResponse(
+            status_code=410,
+            content={
+                "error": "endpoint_removed",
+                "message": "This endpoint was auto-retired after 30 days of zero usage. Use /n8n/calendar instead.",
+                "replacement": "/n8n/calendar",
+            },
+        )
+
+    from .. import n8n_client
+
+    safe_hours = max(1, min(int(hours), 168))
+    safe_account = str(account or "all").strip() or "all"
+    CALENDAR_EVENTS_ALIAS_REQUESTS_TOTAL.labels(account=safe_account).inc()
+    record_alias_call()
+    window_start = datetime.now(timezone.utc)
+    window_end = window_start + timedelta(hours=safe_hours)
+
+    events = n8n_client.get_calendar_events(timeframe="all", account=safe_account)
+    filtered: List[Dict[str, Any]] = []
+
+    for event in events:
+        start_dt = _parse_event_dt(event.get("start"))
+        end_dt = _parse_event_dt(event.get("end")) or start_dt
+
+        if start_dt is None or end_dt is None:
+            continue
+
+        # Include events overlapping the [now, now+hours] window.
+        if start_dt <= window_end and end_dt >= window_start:
+            filtered.append(event)
+
+    return {
+        "events": filtered,
+        "count": len(filtered),
+        "hours": safe_hours,
+        "account": safe_account,
+        "formatted": n8n_client.format_events_for_briefing(filtered, include_date=True),
     }
 
 

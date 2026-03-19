@@ -6,6 +6,8 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
+from psycopg2.extras import RealDictCursor
+
 from app.postgres_state import get_conn
 from app.observability import get_logger
 
@@ -45,7 +47,7 @@ class AgentStatePersistence:
             expires_at = datetime.now() + timedelta(hours=expires_in_hours)
 
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     INSERT INTO jarvis_agent_state (agent_id, user_id, state_key, state_value, expires_at, updated_at)
                     VALUES (%s, %s, %s, %s, %s, NOW())
@@ -65,7 +67,7 @@ class AgentStatePersistence:
     ) -> Optional[Dict[str, Any]]:
         """Get agent state."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 if state_key:
                     cur.execute("""
                         SELECT state_value, updated_at, expires_at
@@ -105,7 +107,7 @@ class AgentStatePersistence:
     def delete_state(self, agent_id: str, user_id: str, state_key: str = None) -> bool:
         """Delete agent state."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 if state_key:
                     cur.execute("""
                         DELETE FROM jarvis_agent_state
@@ -128,14 +130,14 @@ class AgentStatePersistence:
     ) -> Dict[str, Any]:
         """Start a new agent session."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     INSERT INTO jarvis_agent_sessions
                     (agent_id, user_id, session_id, working_directory, started_at)
                     VALUES (%s, %s, %s, %s, NOW())
                     RETURNING id
                 """, (agent_id, user_id, session_id, working_directory))
-                session_db_id = cur.fetchone()[0]
+                session_db_id = cur.fetchone()["id"]
                 conn.commit()
 
         logger.info(f"Started session {session_id} for {agent_id}")
@@ -152,7 +154,7 @@ class AgentStatePersistence:
     ) -> Dict[str, Any]:
         """End an agent session with results."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, started_at FROM jarvis_agent_sessions
                     WHERE session_id = %s AND ended_at IS NULL
@@ -189,7 +191,7 @@ class AgentStatePersistence:
     ) -> List[Dict[str, Any]]:
         """Get recent agent sessions."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 where_clauses = []
                 params = []
 
@@ -243,7 +245,7 @@ class AgentStatePersistence:
     ) -> Dict[str, Any]:
         """Create a handoff from one agent to another."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     INSERT INTO jarvis_agent_handoffs
                     (from_agent, to_agent, user_id, context, files_involved, reason, status)
@@ -251,7 +253,7 @@ class AgentStatePersistence:
                     RETURNING id
                 """, (from_agent, to_agent, user_id, json.dumps(context),
                     json.dumps(files_involved or []), reason))
-                handoff_id = cur.fetchone()[0]
+                handoff_id = cur.fetchone()["id"]
                 conn.commit()
 
         logger.info(f"Created handoff {handoff_id}: {from_agent} -> {to_agent}")
@@ -265,7 +267,7 @@ class AgentStatePersistence:
     def get_pending_handoffs(self, agent_id: str, user_id: str) -> List[Dict[str, Any]]:
         """Get pending handoffs for an agent."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, from_agent, context, files_involved, reason, created_at
                     FROM jarvis_agent_handoffs
@@ -292,7 +294,7 @@ class AgentStatePersistence:
             status = "completed"
 
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     UPDATE jarvis_agent_handoffs
                     SET status = %s, completed_at = NOW()
@@ -304,7 +306,7 @@ class AgentStatePersistence:
     def cleanup_expired(self) -> Dict[str, int]:
         """Clean up expired state entries."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     DELETE FROM jarvis_agent_state
                     WHERE expires_at IS NOT NULL AND expires_at < NOW()
@@ -317,7 +319,7 @@ class AgentStatePersistence:
     def get_agent_stats(self, agent_id: str = None, days: int = 30) -> Dict[str, Any]:
         """Get statistics about agent usage."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 where_clause = f"WHERE started_at > NOW() - INTERVAL '{days} days'"
                 if agent_id:
                     where_clause += f" AND agent_id = '{agent_id}'"
@@ -348,10 +350,10 @@ class AgentStatePersistence:
 
                 # Handoff stats
                 cur.execute(f"""
-                    SELECT COUNT(*) FROM jarvis_agent_handoffs
+                    SELECT COUNT(*) as handoff_count FROM jarvis_agent_handoffs
                     WHERE created_at > NOW() - INTERVAL '{days} days'
                 """)
-                handoffs = cur.fetchone()[0]
+                handoffs = cur.fetchone()["handoff_count"]
 
                 return {
                     "period_days": days,

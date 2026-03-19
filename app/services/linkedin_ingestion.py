@@ -16,7 +16,7 @@ from qdrant_client.models import (
     Filter, FieldCondition, MatchValue
 )
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 from ..embed import embed_texts
 
 
@@ -245,7 +245,7 @@ def upsert_document(
 
 def delete_document_chunks(document_id: uuid.UUID) -> list[str]:
     """Löscht Chunk-Tracking und gibt Qdrant-Point-IDs zurück."""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute(
             "SELECT qdrant_point_id FROM document_chunks WHERE document_id = %s",
             (str(document_id),)

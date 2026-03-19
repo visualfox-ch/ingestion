@@ -6,6 +6,7 @@ All patterns, rules, and configurations are in the database,
 allowing Jarvis to learn and optimize model selection over time.
 """
 
+import os
 import re
 import logging
 import time
@@ -18,10 +19,21 @@ from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_OLLAMA_MODEL = os.environ.get("JARVIS_OLLAMA_DEFAULT_MODEL", "qwen2.5:7b-instruct")
+DEFAULT_LOCAL_TASK_TYPES = {
+    "general_chat",
+    "cheap_local",
+    "speed",
+    "summarize",
+    "rewrite",
+    "brainstorm",
+}
+
 
 class Provider(Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    OLLAMA = "ollama"
 
 
 @dataclass
@@ -171,6 +183,18 @@ class DynamicModelRouter:
     def _get_fallback_models(self) -> Dict[str, ModelConfig]:
         """Fallback models if DB is unavailable."""
         return {
+            DEFAULT_OLLAMA_MODEL: ModelConfig(
+                model_id=DEFAULT_OLLAMA_MODEL,
+                provider=Provider.OLLAMA,
+                display_name='Ollama Local',
+                cost_input_per_1m=0.0,
+                cost_output_per_1m=0.0,
+                capabilities={'reasoning': 0.62, 'coding': 0.58, 'creative': 0.64,
+                              'analysis': 0.60, 'math': 0.52, 'speed': 0.92},
+                specialties=['local', 'fast', 'cheap'],
+                max_tokens=8192,
+                context_window=32768,
+            ),
             'gpt-4o-mini': ModelConfig(
                 model_id='gpt-4o-mini',
                 provider=Provider.OPENAI,
@@ -196,6 +220,45 @@ class DynamicModelRouter:
                 context_window=200000,
             ),
         }
+
+    def _get_local_first_provider(
+        self,
+        task_type: str,
+        complexity: float,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """Return a local-first provider preference when a task is latency or cost sensitive."""
+        if os.environ.get("JARVIS_OLLAMA_LOCAL_ROUTING_ENABLED", "true").lower() not in {
+            "1", "true", "yes", "on"
+        }:
+            return None
+
+        raw_task_types = os.environ.get(
+            "JARVIS_OLLAMA_LOCAL_TASK_TYPES",
+            ",".join(sorted(DEFAULT_LOCAL_TASK_TYPES)),
+        )
+        local_task_types = {
+            item.strip() for item in raw_task_types.split(",") if item.strip()
+        } or DEFAULT_LOCAL_TASK_TYPES
+
+        local_threshold_raw = os.environ.get("JARVIS_OLLAMA_LOCAL_MAX_COMPLEXITY", "0.55")
+        try:
+            local_threshold = float(local_threshold_raw)
+        except ValueError:
+            local_threshold = 0.55
+
+        context = context or {}
+        explicit_local = bool(context.get("prefer_local"))
+        latency_sensitive = bool(context.get("latency_sensitive"))
+        cost_sensitive = bool(context.get("cost_sensitive"))
+
+        if complexity > local_threshold and not explicit_local:
+            return None
+
+        if explicit_local or latency_sensitive or cost_sensitive or task_type in local_task_types:
+            return Provider.OLLAMA.value
+
+        return None
 
     # ========== TASK PATTERNS ==========
 
@@ -435,6 +498,12 @@ class DynamicModelRouter:
         preferred_models: List[str] = []
         capability_boosts: Dict[str, float] = {}
         rules_applied: List[str] = []
+
+        if not preferred_provider:
+            local_first_provider = self._get_local_first_provider(task_type, complexity, context)
+            if local_first_provider:
+                preferred_provider = local_first_provider
+                rules_applied.append('local_first_capability_router')
 
         # Apply rules in priority order
         current_hour = datetime.now().hour
@@ -693,6 +762,8 @@ class DynamicModelRouter:
         except Exception as e:
             logger.warning(f"Failed to get default model: {e}")
 
+        if force_provider == 'ollama':
+            return DEFAULT_OLLAMA_MODEL
         if force_provider == 'anthropic':
             return 'claude-haiku-4-5-20251001'
         return 'gpt-4o-mini'

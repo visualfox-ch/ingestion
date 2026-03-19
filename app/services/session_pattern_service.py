@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional
 from collections import defaultdict
 import json
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class SessionPatternService:
         Returns session info with type detection.
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Check for active session
                 cur.execute("""
                     SELECT session_id, session_type, started_at, last_activity_at,
@@ -208,7 +208,7 @@ class SessionPatternService:
             if "error" in session:
                 return session
 
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Get current session data
                 cur.execute("""
                     SELECT session_type, recent_tools, tool_count
@@ -331,7 +331,7 @@ class SessionPatternService:
             session_type = session.get("session_type")
             recent_tools = session.get("recent_tools", [])
 
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 predictions = []
 
                 # 1. Get tools commonly used in this session type
@@ -426,7 +426,7 @@ class SessionPatternService:
             if "error" in session:
                 return session
 
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     SELECT session_type, started_at, tool_count, recent_tools
                     FROM active_sessions
@@ -469,7 +469,7 @@ class SessionPatternService:
     ) -> Dict[str, Any]:
         """Get historical sessions for a user."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     SELECT session_id, session_type, started_at, ended_at,
                            duration_minutes, tool_count
@@ -516,7 +516,7 @@ class SessionPatternService:
     def get_transition_patterns(self, limit: int = 10) -> Dict[str, Any]:
         """Get common session type transitions."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     SELECT from_type, to_type, occurrence_count,
                            avg_duration_before_minutes

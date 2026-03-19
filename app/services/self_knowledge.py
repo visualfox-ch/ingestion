@@ -227,32 +227,24 @@ def populate_initial_knowledge() -> Dict[str, Any]:
     # Tool usage knowledge
     tool_knowledge = [
         {
-            "key": "read_jarvis_context",
-            "content": """Tool: read_jarvis_context
-Zweck: Lese Jarvis Kontext-Dateien nach semantischem Key.
-KEYWORDS: code lesen, agent code, source code, eigenen code, deinen code, mein code, tasks, aufgaben, todo, identity, wer bist du
+            "key": "self_introspection_tools",
+            "content": """Tools: read_my_source_files, read_project_file, list_tasks
+Zweck: Eigenen Code und aktuelle Aufgaben lesen.
+KEYWORDS: code lesen, source code, eigenen code, tasks, aufgaben, todo
 
 WANN NUTZEN:
-- User fragt nach deinem Code → file_key="agent_code" oder "tools_code"
-- User fragt nach deiner Identität → file_key="identity"
-- User fragt nach Tasks/Aufgaben → file_key="tasks"
-- User fragt nach deinen Capabilities → file_key="capabilities"
-
-KEYS:
-Identity: identity, capabilities, capability_catalog, context_policy
-Code: agent_code, tools_code, prompt_code, telegram_code
-Tasks: tasks, review_plan, tooling
+- User fragt nach deinem Code -> read_my_source_files() oder read_project_file(file_path="...")
+- User fragt nach konkreter Datei -> read_project_file(file_path="...")
+- User fragt nach Tasks/Aufgaben -> list_tasks()
 
 BEISPIELE:
-"Lies deinen Code" → read_jarvis_context(file_key="agent_code")
-"Lies deinen eigenen Agent-Code" → read_jarvis_context(file_key="agent_code")
-"Zeig mir deinen Source Code" → read_jarvis_context(file_key="agent_code")
-"Zeig mir deine Tasks" → read_jarvis_context(file_key="tasks")
-"Zeig mir deine aktuellen Tasks" → read_jarvis_context(file_key="tasks")
-"Was sind deine Aufgaben?" → read_jarvis_context(file_key="tasks")
-"Wer bist du?" → read_jarvis_context(file_key="identity")
+"Lies deinen Code" -> read_my_source_files()
+"Zeig mir deinen Source Code" -> read_my_source_files()
+"Zeig mir app/agent.py" -> read_project_file(file_path="app/agent.py")
+"Zeig mir deine Tasks" -> list_tasks()
+"Was sind deine Aufgaben?" -> list_tasks()
 
-WICHTIG: Du KANNST deinen eigenen Code lesen! Nutze dieses Tool!
+WICHTIG: Du KANNST deinen eigenen Code und deine Tasks lesen. Nutze diese Tools.
 """,
             "metadata": {"priority": "high", "category": "introspection"}
         },
@@ -313,10 +305,10 @@ Zweck: Zeige Jarvis Capability-Metadaten aus kanonischen Dateien.
 WANN NUTZEN:
 - User fragt nach einer Übersicht deiner Fähigkeiten
 - Du brauchst technische Details über deine Capabilities
-- ABER: Für Code-Lesen nutze lieber read_jarvis_context!
+- ABER: Für Code-Lesen nutze lieber read_my_source_files oder read_project_file!
 
 HINWEIS: Dieses Tool zeigt Metadaten, nicht den eigentlichen Code.
-Für Code → read_jarvis_context(file_key="agent_code")
+Für Code -> read_my_source_files() oder read_project_file(file_path="...")
 """,
             "metadata": {"priority": "medium", "category": "introspection"}
         },
@@ -341,11 +333,10 @@ Für Code → read_jarvis_context(file_key="agent_code")
             "content": """Capability: Code-Lesen
 Jarvis KANN seinen eigenen Code lesen!
 
-Tool: read_jarvis_context
-Keys für Code: agent_code, tools_code, prompt_code, telegram_code
+Tools: read_my_source_files, read_project_file
 
 WICHTIG: Wenn User nach Code fragt, NICHT sagen "Ich kann meinen Code nicht lesen".
-Stattdessen: read_jarvis_context(file_key="agent_code") aufrufen.
+Stattdessen: read_my_source_files() oder read_project_file(file_path="...") aufrufen.
 """,
             "metadata": {"verified": True}
         },
@@ -354,8 +345,7 @@ Stattdessen: read_jarvis_context(file_key="agent_code") aufrufen.
             "content": """Capability: Tasks-Lesen
 Jarvis KANN seine aktuellen Tasks lesen!
 
-Tool: read_jarvis_context(file_key="tasks")
-Liest: TASKS.md aus dem Docker-Verzeichnis
+Tool: list_tasks()
 
 WICHTIG: Wenn User nach Tasks fragt, dieses Tool nutzen.
 """,
@@ -430,21 +420,20 @@ def query_before_response(query: str) -> Optional[str]:
     if any(kw in query_lower for kw in code_keywords):
         context_parts.append("""[WICHTIG - Code-Zugriff]
 Du KANNST deinen eigenen Code lesen!
-Tool: read_jarvis_context(file_key="agent_code")
-Weitere Keys: tools_code, prompt_code, telegram_code
+Tools: read_my_source_files() oder read_project_file(file_path="...")
 NICHT sagen "Ich kann meinen Code nicht lesen" - stattdessen das Tool aufrufen!""")
 
     if any(kw in query_lower for kw in task_keywords):
         context_parts.append("""[WICHTIG - Task-Zugriff]
 Du KANNST deine aktuellen Tasks lesen!
-Tool: read_jarvis_context(file_key="tasks")
+Tool: list_tasks()
 NICHT sagen "Ich habe keine Task-Liste" - stattdessen das Tool aufrufen!""")
 
     if any(kw in query_lower for kw in tool_keywords):
         context_parts.append("""[WICHTIG - Tool-Liste]
 Du KANNST deine verfügbaren Tools auflisten!
 Tool: list_available_tools()
-Für Details zu einem Tool: read_jarvis_context(file_key="tools_code")""")
+    Für Details zu Implementierungen: read_my_source_files() oder read_project_file(file_path="...")""")
 
     # === SEMANTIC SEARCH ===
     # Also query semantically for additional context

@@ -6,8 +6,9 @@ Ersetzt hardcoded linkedin/visualfox Config mit DB-gesteuerter Verwaltung.
 """
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field
+from typing import Any, Optional, List
+import requests
 
 from ..services.knowledge_sources import (
     list_knowledge_sources,
@@ -21,6 +22,7 @@ from ..services.knowledge_ingestion import (
     ingest_all_domains
 )
 from ..services.knowledge_retrieval import search_knowledge
+from ..services.web_docs_snapshot import SnapshotConfig, run_web_docs_snapshot
 
 
 router = APIRouter(prefix="/kb", tags=["Knowledge Base (Documents)"])
@@ -53,6 +55,28 @@ class SearchRequest(BaseModel):
 
 class IngestRequest(BaseModel):
     domain: Optional[str] = None
+
+
+class WebDocsSnapshotRequest(BaseModel):
+    domain: str
+    subdomain: str
+    start_urls: List[str]
+    allowed_domains: List[str]
+    output_path: str
+    version: str = "1.0"
+    owner: str = "michael_bohl"
+    channel: Optional[str] = None
+    language: str = "en"
+    quality: str = "high"
+    auto_reingest: bool = True
+    auto_register: bool = True
+    auto_ingest: bool = True
+    max_depth: int = 0
+    max_pages: int = 1
+    timeout_seconds: float = 10.0
+    rate_limit_ms: int = 0
+    allowed_content_types: List[str] = Field(default_factory=lambda: ["text/html"])
+    follow_links: bool = False
 
 
 # ============================================================================
@@ -180,6 +204,73 @@ async def ingest_single_domain(domain: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/web-docs/snapshot")
+async def snapshot_web_docs(request: WebDocsSnapshotRequest):
+    """Fetch one curated docs domain into markdown snapshots and optionally ingest it."""
+    if not request.output_path.startswith("/brain/"):
+        raise HTTPException(status_code=400, detail="output_path must start with /brain/")
+
+    config = SnapshotConfig(
+        domain=request.domain,
+        subdomain=request.subdomain,
+        start_urls=request.start_urls,
+        allowed_domains=request.allowed_domains,
+        output_path=request.output_path,
+        version=request.version,
+        owner=request.owner,
+        channel=request.channel,
+        language=request.language,
+        quality=request.quality,
+        auto_reingest=request.auto_reingest,
+        max_depth=request.max_depth,
+        max_pages=request.max_pages,
+        timeout_seconds=request.timeout_seconds,
+        rate_limit_ms=request.rate_limit_ms,
+        allowed_content_types=request.allowed_content_types,
+        follow_links=request.follow_links,
+    )
+
+    try:
+        snapshot_result = run_web_docs_snapshot(config)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except requests.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    registration_results: list[dict[str, Any]] = []
+    if request.auto_register:
+        for item in snapshot_result["files"]:
+            result = add_knowledge_source(
+                domain=request.domain,
+                subdomain=request.subdomain,
+                file_path=item["file_path"],
+                title=item["title"],
+                version=request.version,
+                owner=request.owner,
+                channel=request.channel,
+                language=request.language,
+                quality=request.quality,
+                auto_reingest=request.auto_reingest,
+            )
+            if not result.get("success"):
+                raise HTTPException(status_code=400, detail=result.get("error"))
+            registration_results.append(result)
+
+    ingest_results: list[dict[str, Any]] | None = None
+    if request.auto_ingest:
+        ingest_results = await ingest_domain(request.domain)
+
+    return {
+        "status": "completed",
+        "snapshot": snapshot_result,
+        "registered_sources": len(registration_results),
+        "registration_results": registration_results,
+        "ingest_results": ingest_results,
+    }
 
 
 # ============================================================================

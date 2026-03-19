@@ -566,7 +566,17 @@ class GuardrailsService:
                     duration_ms
                 ))
                 result = cur.fetchone()
-                return result[0] if result else None
+                if not result:
+                    return None
+
+                # Support both tuple cursors and dict-like cursors.
+                try:
+                    return result[0]
+                except Exception:
+                    try:
+                        return result.get("id")
+                    except Exception:
+                        return None
         except Exception as e:
             self.logger.error(f"Failed to log audit: {e}")
             return None

@@ -93,6 +93,7 @@ from .routers.memory_maintenance_router import router as memory_maintenance_rout
 from .routers.memory_alerting_router import router as memory_alerting_router
 from .routers.optimization_router import router as optimization_router
 from .routers.n8n_router import router as n8n_router
+from .routers.ollama_proxy_router import router as ollama_proxy_router
 from .routers.admin_router import router as admin_router
 from .routers.remediation_router import router as remediation_router
 from .routers.salience_router import router as salience_router
@@ -219,6 +220,7 @@ app.include_router(memory_alerting_router)
 app.include_router(data_import_router)
 app.include_router(optimization_router)
 app.include_router(n8n_router)
+app.include_router(ollama_proxy_router)
 app.include_router(admin_router)
 app.include_router(remediation_router)
 app.include_router(salience_router)
@@ -890,6 +892,13 @@ def startup_event():
     start_bot_background()
     start_scheduler()
 
+    # Alias auto-sunset: initialize monitoring state file (no-op if already exists)
+    try:
+        from .jobs.alias_sunset_job import init_monitoring as _init_alias_sunset
+        _init_alias_sunset()
+    except Exception as e:
+        logger.warning(f"Failed to init alias sunset monitoring: {e}")
+
     # Phase 19.1: Start auto session persist background cleanup
     try:
         from .services.auto_session_persist import get_auto_session_persist
@@ -919,10 +928,6 @@ def startup_event():
 
     # Send restart notification to Telegram (deduplicated by update note)
     try:
-        import json
-        import os
-        import time
-
         update_file = "/brain/system/data/LATEST_UPDATE.txt"
         state_file = "/brain/system/data/.startup_alert_state.json"
 

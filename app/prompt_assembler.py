@@ -31,18 +31,18 @@ Architecture:
     └─────────────────────────────────────┘
 """
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
-
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    from backports.zoneinfo import ZoneInfo
+from functools import lru_cache
+from pathlib import Path
 
 from .observability import get_logger, log_with_context
+from .utils.timezone import get_timezone
 
 logger = get_logger("jarvis.prompt_assembler")
+_VALID_TOOL_NAME = re.compile(r"^[a-z][a-z0-9_]+$")
 
 
 # ============ Fixed Main Prompt ============
@@ -804,7 +804,7 @@ def get_time_based_context(timezone: str = "Europe/Zurich") -> str:
         Context string for prompt injection.
     """
     try:
-        tz = ZoneInfo(timezone)
+        tz = get_timezone(timezone)
         now = datetime.now(tz)
         hour = now.hour
         weekday = now.weekday()  # 0=Monday, 6=Sunday
@@ -1071,6 +1071,115 @@ def get_system_prompt(query_class: str = "standard") -> str:
         return FIXED_MAIN_PROMPT
 
 
+@lru_cache(maxsize=1)
+def _get_available_tool_names() -> Optional[frozenset]:
+    """
+    Load the currently exposed tool names from the canonical tool definitions.
+
+    Returns None on lookup failure so routing can safely fall back to the
+    historical static lists instead of disabling tools entirely.
+    """
+    try:
+        from .tools import get_tool_definitions
+
+        tool_names = {
+            tool["name"]
+            for tool in get_tool_definitions()
+            if tool.get("name")
+        }
+        return frozenset(tool_names)
+    except Exception as exc:
+        fallback_tool_names = _extract_available_tool_names_from_source()
+        if fallback_tool_names:
+            log_with_context(
+                logger,
+                "debug",
+                "Tool availability lookup fell back to source extraction",
+                error=str(exc),
+                tool_count=len(fallback_tool_names),
+            )
+            return fallback_tool_names
+
+        log_with_context(
+            logger,
+            "warning",
+            "Tool availability lookup failed; using unfiltered prompt routing",
+            error=str(exc),
+        )
+        return None
+
+
+def _extract_available_tool_names_from_source() -> Optional[frozenset]:
+    """Fallback for lightweight environments where the full tools module cannot load."""
+    app_root = Path(__file__).resolve().parent
+    candidate_files = [app_root / "tools.py"]
+
+    connectors_dir = app_root / "connectors"
+    if connectors_dir.exists():
+        candidate_files.extend(
+            sorted(
+                path for path in connectors_dir.glob("*.py")
+                if not path.name.startswith("_")
+            )
+        )
+
+    extracted_tool_names = set()
+    for file_path in candidate_files:
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        extracted_tool_names.update(
+            tool_name
+            for tool_name in re.findall(r'"name":\s*"([^"]+)"', content)
+            if _VALID_TOOL_NAME.fullmatch(tool_name)
+        )
+
+    if not extracted_tool_names:
+        return None
+
+    return frozenset(extracted_tool_names)
+
+
+def _filter_tool_names(tool_names: List[str]) -> List[str]:
+    """Deduplicate tool names and keep only currently registered tools."""
+    available_tool_names = _get_available_tool_names()
+    seen = set()
+    filtered: List[str] = []
+
+    for tool_name in tool_names:
+        if not tool_name or tool_name in seen:
+            continue
+        if available_tool_names is not None and tool_name not in available_tool_names:
+            continue
+        seen.add(tool_name)
+        filtered.append(tool_name)
+
+    return filtered
+
+
+def _filter_tool_categories(
+    tool_categories: Dict[str, Dict[str, List[str]]],
+    *,
+    drop_empty: bool = False,
+) -> Dict[str, Dict[str, List[str]]]:
+    """Filter category tool lists against the live registry."""
+    filtered_categories: Dict[str, Dict[str, List[str]]] = {}
+
+    for category_name, config in tool_categories.items():
+        filtered_tools = _filter_tool_names(config.get("tools", []))
+        if drop_empty and not filtered_tools:
+            continue
+
+        filtered_categories[category_name] = {
+            **config,
+            "tools": filtered_tools,
+        }
+
+    return filtered_categories
+
+
 def get_tools_for_query(query: str, query_class: str = "standard") -> List[str]:
     """
     T-023: Select tool subset based on query class and query keywords.
@@ -1301,6 +1410,26 @@ def get_tools_for_query(query: str, query_class: str = "standard") -> List[str]:
                         "learning insights", "was hast du gelernt", "what have you learned",
                         "pattern learning", "trigger learning", "lernstatus", "insights"],
         },
+        # AI Assistant Handoff (U4: Coordination between AI Assistants)
+        "handoff": {
+            "tools": ["create_handoff", "get_pending_handoffs", "complete_handoff",
+                     "get_handoff_context", "suggest_assistant"],
+            "keywords": ["handoff", "übergabe", "claude code", "copilot", "codex",
+                        "delegate", "delegieren", "übergeben", "assistant", "assistent",
+                        "code task", "coding task", "refactoring", "code review",
+                        "an claude", "an copilot", "weiterleiten", "überweisen"],
+        },
+        # Smart Memory Retrieval (U3: Multi-Signal Ranking)
+        "smart_retrieval": {
+            "tools": ["smart_recall", "get_retrieval_strategies",
+                     "analyze_query_for_retrieval", "get_memory_stats"],
+            "keywords": ["smart recall", "memory ranking", "retrieval", "abruf",
+                        "semantic search", "semantische suche", "hybrid search",
+                        "memory stats", "speicherstatistik", "retrieval strategy",
+                        "abrufstrategie", "was weisst du über", "erinner dich",
+                        "remember", "recall", "find memories", "finde erinnerungen",
+                        "memory search", "gedächtnissuche", "multi-signal"],
+        },
         # Self-Reflection Engine (AGI Phase A1)
         "self_reflection": {
             "tools": ["evaluate_my_response", "reflect_on_response", "get_my_learnings",
@@ -1374,7 +1503,7 @@ def get_tools_for_query(query: str, query_class: str = "standard") -> List[str]:
             "tools": ["read_project_file"],
             "keywords": ["datei", "file", "lies", "read", "öffne", "zeig datei"],
         },
-        # Note: read_dev_docs was removed - use read_project_file or read_jarvis_context instead
+        # Note: read_dev_docs was removed - use read_project_file or read_my_source_files instead
         "introspection": {
             "tools": [
                 "introspect_capabilities",
@@ -1766,6 +1895,7 @@ def get_tools_for_query(query: str, query_class: str = "standard") -> List[str]:
         "store_context", "recall_context", "forget_context",
         "store_contexts_batch"  # Batch operation
     ])
+    tool_categories = _filter_tool_categories(tool_categories)
 
     relevant_tools = set()
     
@@ -1778,23 +1908,23 @@ def get_tools_for_query(query: str, query_class: str = "standard") -> List[str]:
             relevant_tools.update(tools)
     
     # Always include core tools for standard queries (minimum viable tool set)
-    core_tools = [
+    core_tools = _filter_tool_names([
         "search_knowledge",
         "proactive_hint",
         "recall_conversation_history",
         "delegate_ollama_task"
-    ]
+    ])
     relevant_tools.update(core_tools)
     
     # If no category-specific tools matched (only core tools present), 
     # add basic retrieval tools to ensure agent can answer knowledge questions
     if len(relevant_tools) <= len(core_tools):
-        relevant_tools.update([
+        relevant_tools.update(_filter_tool_names([
             "get_recent_activity",
             "recall_facts",
             "get_person_context",
-        ])
-    
+        ]))
+
     return sorted(list(relevant_tools))
 
 
@@ -1856,7 +1986,7 @@ def get_tool_categories() -> Dict[str, Dict]:
         Dict mapping category name to {"tools": [...], "keywords": [...]}
     """
     # Return the core categories (simplified version for discovery)
-    return {
+    return _filter_tool_categories({
         "knowledge": {"tools": ["search_knowledge", "search_emails", "search_chats"], "keywords": ["suche", "wissen"]},
         "calendar": {"tools": ["get_calendar_events", "create_calendar_event"], "keywords": ["termin", "kalender"]},
         "memory": {"tools": ["remember_fact", "recall_facts", "recall_conversation_history"], "keywords": ["erinnere", "merke"]},
@@ -1875,4 +2005,4 @@ def get_tool_categories() -> Dict[str, Dict]:
         "autonomy": {"tools": ["manage_tool_registry", "get_autonomy_status"], "keywords": ["autonomie", "autonomy"]},
         "linkedin": {"tools": ["linkedin_analyze_post", "linkedin_coach_draft"], "keywords": ["linkedin", "post"]},
         "devops": {"tools": ["query_prometheus", "query_loki"], "keywords": ["monitoring", "logs"]},
-    }
+    }, drop_empty=True)

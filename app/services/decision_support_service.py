@@ -17,6 +17,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 
+from psycopg2.extras import RealDictCursor
+
 from app.postgres_state import get_conn
 from app.observability import get_logger
 
@@ -91,7 +93,7 @@ class DecisionSupportService:
         situations = []
 
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Build keyword search conditions
                 keyword_conditions = []
                 params = [user_id]
@@ -165,7 +167,7 @@ class DecisionSupportService:
 
         # Find patterns where this option is the cause
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Get patterns where option appears in cause
                 cur.execute("""
                     SELECT id, cause, effect, effect_type, confidence, evidence_count,
@@ -376,7 +378,7 @@ class DecisionSupportService:
     ) -> List[Dict[str, Any]]:
         """Get recent decisions and their outcomes."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Get recent causal observations as decision history
                 query = """
                     SELECT o.cause_event, o.effect_event, o.time_delta_minutes,
@@ -478,7 +480,7 @@ class DecisionSupportService:
     def get_stats(self, user_id: str) -> Dict[str, Any]:
         """Get decision support statistics."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Total patterns
                 cur.execute("""
                     SELECT COUNT(*) as total FROM jarvis_causal_patterns

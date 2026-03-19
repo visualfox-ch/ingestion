@@ -8,6 +8,7 @@ Pattern: Singleton GlobalState instance with threading.RLock() for re-entrancy.
 """
 
 import threading
+from datetime import datetime
 from typing import Dict, Any
 
 
@@ -39,6 +40,14 @@ class GlobalState:
         # Email draft rate limiting (main.py)
         self._draft_counts = {}
         self._draft_reset_date = ""
+
+        # Startup / readiness state
+        self._startup_state = {
+            "started_at": None,
+            "ready": False,
+            "ready_at": None,
+            "last_error": None,
+        }
     
     # ===== POOL MANAGEMENT (Connection Draining) =====
     
@@ -155,6 +164,34 @@ class GlobalState:
         with self._lock:
             self._draft_counts[key] = self._draft_counts.get(key, 0) + 1
             return self._draft_counts[key]
+
+    # ===== STARTUP / READINESS =====
+
+    def mark_startup_started(self) -> None:
+        """Mark application startup as started and clear previous ready state."""
+        with self._lock:
+            self._startup_state["started_at"] = datetime.utcnow().isoformat()
+            self._startup_state["ready"] = False
+            self._startup_state["ready_at"] = None
+            self._startup_state["last_error"] = None
+
+    def mark_startup_ready(self) -> None:
+        """Mark application startup as completed and ready to serve traffic."""
+        with self._lock:
+            self._startup_state["ready"] = True
+            self._startup_state["ready_at"] = datetime.utcnow().isoformat()
+            self._startup_state["last_error"] = None
+
+    def mark_startup_failed(self, error: str) -> None:
+        """Record the last startup error."""
+        with self._lock:
+            self._startup_state["ready"] = False
+            self._startup_state["last_error"] = str(error)
+
+    def get_startup_state(self) -> Dict[str, Any]:
+        """Return a copy of startup / readiness state."""
+        with self._lock:
+            return dict(self._startup_state)
 
 
 # Global singleton instance (imported by main.py and telegram_bot.py)

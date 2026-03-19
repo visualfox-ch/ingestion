@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 import uuid
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 from ..observability import get_logger
 
 logger = get_logger("jarvis.knowledge_sources")
@@ -54,7 +54,7 @@ def get_active_sources(domain: Optional[str] = None) -> List[KnowledgeSource]:
     Returns:
         Liste von KnowledgeSource Objekten
     """
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         if domain:
             cur.execute(
                 """
@@ -106,7 +106,7 @@ def get_active_sources(domain: Optional[str] = None) -> List[KnowledgeSource]:
 
 def get_all_domains() -> List[str]:
     """Gibt alle aktiven Domains zurück."""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute(
             """
             SELECT DISTINCT domain FROM knowledge_sources
@@ -119,7 +119,7 @@ def get_all_domains() -> List[str]:
 
 def get_source_by_id(source_id: str) -> Optional[KnowledgeSource]:
     """Holt eine Knowledge Source anhand ihrer ID."""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute(
             """
             SELECT id, domain, subdomain, file_path, title, version,
@@ -185,7 +185,7 @@ def add_knowledge_source(
     actual_collection = collection_name or f"jarvis_{domain}"
 
     try:
-        with get_cursor() as cur:
+        with get_dict_cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO knowledge_sources
@@ -249,7 +249,7 @@ def remove_knowledge_source(
         hard_delete: Wenn True, wird der Eintrag gelöscht statt deaktiviert
     """
     try:
-        with get_cursor() as cur:
+        with get_dict_cursor() as cur:
             if hard_delete:
                 if source_id:
                     cur.execute(
@@ -302,7 +302,7 @@ def update_ingestion_status(
     error: Optional[str] = None
 ):
     """Aktualisiert den Ingestion-Status einer Source."""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         if error:
             cur.execute(
                 """
@@ -335,7 +335,7 @@ def list_knowledge_sources(
     """
     Listet Knowledge Sources für Anzeige/Tool-Output.
     """
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         query = """
             SELECT id, domain, subdomain, file_path, title, version,
                    collection_name, active, last_ingested_at, last_chunk_count, last_error
@@ -386,7 +386,7 @@ def bump_version(source_id: str, new_version: Optional[str] = None) -> dict:
         new_version = datetime.now().strftime("%Y-%m-%d")
 
     try:
-        with get_cursor() as cur:
+        with get_dict_cursor() as cur:
             cur.execute(
                 """
                 UPDATE knowledge_sources SET

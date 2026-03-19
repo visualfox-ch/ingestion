@@ -25,7 +25,7 @@ def get_agent_message_tools() -> List[Dict[str, Any]]:
             "name": "send_agent_message",
             "description": (
                 "Sendet eine Nachricht an einen anderen Agent/Specialist. "
-                "Ermöglicht Kommunikation zwischen FitJarvis, WorkJarvis, CommJarvis."
+                "Ermöglicht Kommunikation zwischen FitJarvis, WorkJarvis, CommJarvis, SaaSJarvis."
             ),
             "category": ToolCategory.SYSTEM.value,
             "parameters": {
@@ -33,12 +33,12 @@ def get_agent_message_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "from_agent": {
                         "type": "string",
-                        "enum": ["jarvis", "fit", "work", "comm"],
+                        "enum": ["jarvis", "fit", "work", "comm", "saas"],
                         "description": "Absender-Agent"
                     },
                     "to_agent": {
                         "type": "string",
-                        "enum": ["jarvis", "fit", "work", "comm"],
+                        "enum": ["jarvis", "fit", "work", "comm", "saas"],
                         "description": "Empfänger-Agent"
                     },
                     "message_type": {
@@ -82,7 +82,7 @@ def get_agent_message_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "agent": {
                         "type": "string",
-                        "enum": ["jarvis", "fit", "work", "comm"],
+                        "enum": ["jarvis", "fit", "work", "comm", "saas"],
                         "description": "Für welchen Agent"
                     },
                     "status": {
@@ -126,7 +126,7 @@ def get_agent_message_tools() -> List[Dict[str, Any]]:
                     },
                     "from_agent": {
                         "type": "string",
-                        "enum": ["jarvis", "fit", "work", "comm"],
+                        "enum": ["jarvis", "fit", "work", "comm", "saas"],
                         "description": "Antwortender Agent"
                     },
                     "content": {
@@ -160,12 +160,12 @@ def get_agent_message_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "from_specialist": {
                         "type": "string",
-                        "enum": ["jarvis", "fit", "work", "comm"],
+                        "enum": ["jarvis", "fit", "work", "comm", "saas"],
                         "description": "Aktueller Specialist"
                     },
                     "to_specialist": {
                         "type": "string",
-                        "enum": ["fit", "work", "comm"],
+                        "enum": ["fit", "work", "comm", "saas"],
                         "description": "Ziel-Specialist"
                     },
                     "context_summary": {
@@ -204,7 +204,7 @@ def get_agent_message_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "from_agent": {
                         "type": "string",
-                        "enum": ["jarvis", "fit", "work", "comm"],
+                        "enum": ["jarvis", "fit", "work", "comm", "saas"],
                         "description": "Absender"
                     },
                     "subject": {
@@ -243,7 +243,7 @@ def get_agent_message_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "agent": {
                         "type": "string",
-                        "enum": ["jarvis", "fit", "work", "comm"],
+                        "enum": ["jarvis", "fit", "work", "comm", "saas"],
                         "description": "Optional: Stats nur für diesen Agent"
                     }
                 },

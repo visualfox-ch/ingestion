@@ -26,7 +26,7 @@ def get_specialist_tools() -> List[Dict[str, Any]]:
             "description": (
                 "Zeigt alle verfügbaren Specialist Agents: "
                 "FitJarvis (Fitness/Gesundheit), WorkJarvis (Produktivität), "
-                "CommJarvis (Kommunikation). Jeder Specialist hat eigene "
+                "CommJarvis (Kommunikation), SaaSJarvis (Revenue/Product-Ops). Jeder Specialist hat eigene "
                 "Expertise und Tools."
             ),
             "category": ToolCategory.SYSTEM.value,
@@ -55,8 +55,8 @@ def get_specialist_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "specialist_name": {
                         "type": "string",
-                        "enum": ["fit", "work", "comm"],
-                        "description": "Name des Specialists (fit, work, comm)"
+                        "enum": ["fit", "work", "comm", "saas"],
+                        "description": "Name des Specialists (fit, work, comm, saas)"
                     }
                 },
                 "required": ["specialist_name"]
@@ -81,7 +81,7 @@ def get_specialist_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "specialist_name": {
                         "type": "string",
-                        "enum": ["fit", "work", "comm"],
+                        "enum": ["fit", "work", "comm", "saas"],
                         "description": "Name des zu aktivierenden Specialists"
                     },
                     "reason": {
@@ -111,7 +111,7 @@ def get_specialist_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "specialist_name": {
                         "type": "string",
-                        "enum": ["fit", "work", "comm"],
+                        "enum": ["fit", "work", "comm", "saas"],
                         "description": "Optional: Nur Stats für diesen Specialist"
                     }
                 },
@@ -138,7 +138,7 @@ def get_specialist_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "specialist_name": {
                         "type": "string",
-                        "enum": ["fit", "work", "comm"],
+                        "enum": ["fit", "work", "comm", "saas"],
                         "description": "Welcher Specialist"
                     },
                     "memory_type": {
@@ -181,7 +181,7 @@ def get_specialist_tools() -> List[Dict[str, Any]]:
                 "properties": {
                     "specialist_name": {
                         "type": "string",
-                        "enum": ["fit", "work", "comm"],
+                        "enum": ["fit", "work", "comm", "saas"],
                         "description": "Welcher Specialist"
                     },
                     "memory_type": {

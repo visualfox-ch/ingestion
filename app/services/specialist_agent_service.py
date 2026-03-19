@@ -515,7 +515,8 @@ class SpecialistAgentService:
             category_map = {
                 "fit": ["fitness", "health", "weight", "sport"],
                 "work": ["work", "career", "productivity", "project"],
-                "comm": ["social", "relationships", "networking"]
+                "comm": ["social", "relationships", "networking"],
+                "saas": ["saas", "revenue", "growth", "product"]
             }
 
             categories = category_map.get(specialist_name, [])

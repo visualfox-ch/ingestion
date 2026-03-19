@@ -19,7 +19,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Callable
 
-from .tools import execute_tool
 from .observability import get_logger, log_with_context, metrics, tool_loop_detector
 
 logger = get_logger("jarvis.tool_executor")
@@ -28,6 +27,13 @@ logger = get_logger("jarvis.tool_executor")
 _chain_analyzer = None
 _performance_tracker = None
 _reasoning_observer = None
+
+
+def _call_execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    """Lazy-load the tool registry to keep lightweight tests importable."""
+    from .tools import execute_tool
+
+    return execute_tool(tool_name, tool_input)
 
 
 def _get_reasoning_observer():
@@ -129,10 +135,10 @@ class ToolExecutor:
 
     def process_response(self, response) -> ToolBatchResult:
         """
-        Process a Claude response and execute any tool_use blocks.
+        Process a normalized provider response and execute any tool_use blocks.
 
         Args:
-            response: Anthropic API response object
+            response: normalized response object or compatible provider response
 
         Returns:
             ToolBatchResult with executions, formatted content, and tool results
@@ -140,13 +146,14 @@ class ToolExecutor:
         batch_start = time.time()
         batch = ToolBatchResult()
 
-        for block in response.content:
-            if block.type == "text":
+        for block in self._iter_content_blocks(response):
+            block_type = self._get_block_attr(block, "type")
+            if block_type == "text":
                 batch.assistant_content.append({
                     "type": "text",
-                    "text": block.text
+                    "text": self._get_block_attr(block, "text", "")
                 })
-            elif block.type == "tool_use":
+            elif block_type == "tool_use":
                 execution = self._execute_single_tool(block)
                 batch.executions.append(execution)
                 self._executions.append(execution)
@@ -172,23 +179,41 @@ class ToolExecutor:
         batch.total_duration_ms = (time.time() - batch_start) * 1000
         return batch
 
+    def _iter_content_blocks(self, response) -> List[Any]:
+        """Return content blocks from normalized dict or object responses."""
+        if isinstance(response, dict):
+            return response.get("content", []) or []
+        return getattr(response, "content", []) or []
+
+    def _get_block_attr(self, block: Any, name: str, default: Any = None) -> Any:
+        """Read block fields from dicts, dataclasses, or provider SDK objects."""
+        if isinstance(block, dict):
+            return block.get(name, default)
+        return getattr(block, name, default)
+
     def _check_requires_approval(self, tool_name: str) -> bool:
         """Check if a tool requires user approval before execution."""
         try:
-            from .postgres_state import get_conn
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT requires_approval FROM jarvis_tools WHERE name = %s",
-                        (tool_name,)
-                    )
-                    row = cur.fetchone()
-                    log_with_context(logger, "info", "Approval check result",
-                                   tool=tool_name, row=str(row),
-                                   requires_approval=row.get("requires_approval") if row else None)
-                    if row and row.get("requires_approval"):
-                        log_with_context(logger, "info", f"APPROVAL REQUIRED for tool: {tool_name}")
-                        return True
+            from .postgres_state import get_dict_cursor
+
+            with get_dict_cursor() as cur:
+                cur.execute(
+                    "SELECT requires_approval FROM jarvis_tools WHERE name = %s",
+                    (tool_name,)
+                )
+                row = cur.fetchone()
+                requires_approval = bool(row.get("requires_approval")) if row else False
+                log_with_context(
+                    logger,
+                    "info",
+                    "Approval check result",
+                    tool=tool_name,
+                    row=str(row),
+                    requires_approval=requires_approval,
+                )
+                if requires_approval:
+                    log_with_context(logger, "info", f"APPROVAL REQUIRED for tool: {tool_name}")
+                    return True
         except Exception as e:
             log_with_context(logger, "warning", "Could not check requires_approval",
                            tool=tool_name, error=str(e))
@@ -196,9 +221,9 @@ class ToolExecutor:
 
     def _execute_single_tool(self, block) -> ToolExecutionResult:
         """Execute a single tool_use block."""
-        tool_name = block.name
-        tool_input = block.input
-        tool_id = block.id
+        tool_name = self._get_block_attr(block, "name")
+        tool_input = self._get_block_attr(block, "input", {}) or {}
+        tool_id = self._get_block_attr(block, "id")
 
         log_with_context(logger, "info", f"Executing tool: {tool_name}",
                        input=json.dumps(tool_input)[:200])
@@ -229,8 +254,32 @@ class ToolExecutor:
                 loop_count=0
             )
 
+        # Phase A: Auto-Hook - check_guardrails before autonomous tools
+        guardrails_result = self._check_guardrails_hook(tool_name, tool_input)
+        if guardrails_result and not guardrails_result.get("allowed", True):
+            log_with_context(logger, "warning", f"Guardrails blocked tool: {tool_name}",
+                           reason=guardrails_result.get("reason"))
+            result = {
+                "status": "blocked_by_guardrails",
+                "tool": tool_name,
+                "reason": guardrails_result.get("reason", "Guardrail violation"),
+                "violations": guardrails_result.get("violations", []),
+                "instruction": "Diese Aktion wurde durch Leitplanken blockiert. Erkläre dem User warum."
+            }
+            duration_ms = (time.time() - start_time) * 1000
+            return ToolExecutionResult(
+                tool_name=tool_name,
+                tool_id=tool_id,
+                input=tool_input,
+                result=result,
+                result_summary=f"Blocked by guardrails: {guardrails_result.get('reason', 'violation')}",
+                duration_ms=duration_ms,
+                loop_detected=False,
+                loop_count=0
+            )
+
         # Execute the tool
-        result = execute_tool(tool_name, tool_input)
+        result = _call_execute_tool(tool_name, tool_input)
 
         duration_ms = (time.time() - start_time) * 1000
 
@@ -315,6 +364,53 @@ class ToolExecutor:
             return "success" if result["success"] else "failed"
         return "executed"
 
+    def _check_guardrails_hook(
+        self,
+        tool_name: str,
+        tool_input: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Phase A Auto-Hook: Check guardrails before autonomous tool execution.
+
+        This hook automatically calls check_guardrails for tools that can
+        modify state, send messages, or affect external systems.
+
+        Returns:
+            None if check should be skipped
+            Dict with 'allowed', 'reason', 'violations' if checked
+        """
+        try:
+            from .services.agent_hooks import AgentHooks, get_safe_tools, get_autonomous_tools
+
+            # Skip for safe read-only tools (Tier 0 from DB)
+            if tool_name in get_safe_tools():
+                return None
+
+            # Only check autonomous tools (Tier 2-3 from DB)
+            if tool_name not in get_autonomous_tools():
+                return None
+
+            hooks = AgentHooks(
+                user_id=int(self.user_id) if self.user_id and self.user_id.isdigit() else None,
+                session_id=self.session_id
+            )
+
+            result = hooks.pre_tool(
+                tool_name=tool_name,
+                tool_input=tool_input,
+                context={"query": self.query[:200] if self.query else ""}
+            )
+
+            if result.skipped:
+                return None
+
+            return result.data
+
+        except Exception as e:
+            log_with_context(logger, "debug", "Guardrails hook failed (allowing tool)",
+                           tool=tool_name, error=str(e))
+            return None  # Fail open - allow if hook fails
+
     def get_all_executions(self) -> List[ToolExecutionResult]:
         """Get all tool executions so far."""
         return self._executions
@@ -395,6 +491,19 @@ class ToolExecutor:
                 )
             except Exception as e:
                 log_with_context(logger, "debug", "Performance tracking failed", error=str(e))
+
+        # Phase 21A: Context-Tool Affinity Learning
+        try:
+            from .services.contextual_tool_router import get_contextual_tool_router
+            router = get_contextual_tool_router()
+            router.record_routing_outcome(
+                query=self.query[:200] if self.query else "",
+                tool_selected=tool_name,
+                was_successful=success,
+                context={"session_id": self.session_id}
+            )
+        except Exception as e:
+            log_with_context(logger, "debug", "Routing outcome recording failed", error=str(e))
 
         # T-21A-01: Tool Chain Tracking
         analyzer = _get_chain_analyzer()

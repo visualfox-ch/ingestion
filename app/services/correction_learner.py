@@ -182,6 +182,46 @@ class CorrectionLearner:
         words = first.split()[:max_words]
         return " ".join(words)
 
+    def _extract_keywords(self, text: str) -> List[str]:
+        """Extract meaningful keywords from text for matching."""
+        if not text:
+            return []
+
+        # Stop words to ignore (German + English)
+        stop_words = {
+            # German
+            'der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'aber', 'wenn', 'als',
+            'mit', 'von', 'zu', 'für', 'auf', 'in', 'an', 'bei', 'nach', 'vor',
+            'ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr', 'mir', 'dir', 'mich', 'dich',
+            'wie', 'was', 'wer', 'wann', 'wo', 'warum', 'welche', 'welcher', 'welches',
+            'bitte', 'danke', 'ja', 'nein', 'nicht', 'auch', 'noch', 'schon', 'sehr',
+            'kannst', 'könntest', 'zeig', 'zeige', 'sag', 'sage', 'gibt', 'hast', 'hat',
+            'haben', 'sind', 'ist', 'war', 'waren', 'meine', 'deine', 'seine', 'ihre',
+            # English
+            'the', 'a', 'an', 'and', 'or', 'but', 'if', 'as', 'with', 'from', 'to',
+            'for', 'on', 'in', 'at', 'by', 'after', 'before', 'is', 'are', 'was',
+            'how', 'what', 'who', 'when', 'where', 'why', 'which', 'can', 'could',
+            'please', 'thanks', 'yes', 'no', 'not', 'also', 'still', 'already', 'very',
+            'i', 'you', 'he', 'she', 'it', 'we', 'they', 'my', 'your', 'his', 'her',
+            'this', 'that', 'these', 'those', 'do', 'does', 'did', 'have', 'has', 'had',
+        }
+
+        # Extract words (alphanumeric + umlauts)
+        words = re.findall(r'\b[a-zäöüß]+\b', text.lower())
+
+        # Filter: not a stop word and at least 3 chars
+        keywords = [w for w in words if w not in stop_words and len(w) >= 3]
+
+        # Return unique keywords (preserve order)
+        seen = set()
+        unique = []
+        for kw in keywords:
+            if kw not in seen:
+                seen.add(kw)
+                unique.append(kw)
+
+        return unique[:15]  # Max 15 keywords
+
     # ==================== STORAGE ====================
 
     def store_correction(
@@ -199,23 +239,32 @@ class CorrectionLearner:
         """
         Store a correction pattern in the database.
         """
+        import json
+
         try:
+            # Extract keywords for faster matching
+            pattern_keywords = self._extract_keywords(error_pattern)
+            keywords_json = json.dumps(pattern_keywords)
+
             with get_cursor() as cur:
                 cur.execute("""
                     INSERT INTO correction_patterns
                         (error_type, error_pattern, correction_text, correct_response,
-                         original_response, error_context, confidence, session_id, user_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         original_response, error_context, confidence, session_id, user_id,
+                         pattern_keywords)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                     ON CONFLICT (error_type, error_pattern) DO UPDATE SET
                         occurrence_count = correction_patterns.occurrence_count + 1,
                         confidence = GREATEST(correction_patterns.confidence, EXCLUDED.confidence),
                         correct_response = COALESCE(EXCLUDED.correct_response, correction_patterns.correct_response),
+                        pattern_keywords = EXCLUDED.pattern_keywords,
                         last_triggered = NOW(),
                         updated_at = NOW()
                     RETURNING id, occurrence_count
                 """, (
                     error_type, error_pattern, correction_text, correct_response,
-                    original_response, error_context, confidence, session_id, user_id
+                    original_response, error_context, confidence, session_id, user_id,
+                    keywords_json
                 ))
                 result = cur.fetchone()
 
@@ -241,7 +290,7 @@ class CorrectionLearner:
         limit: int = 5
     ) -> List[Dict[str, Any]]:
         """
-        Get corrections relevant to a query.
+        Get corrections relevant to a query using keyword-based matching.
 
         Args:
             query: The current query to check against
@@ -250,13 +299,18 @@ class CorrectionLearner:
             limit: Max corrections to return
 
         Returns:
-            List of relevant correction patterns
+            List of relevant correction patterns, ranked by relevance
         """
         try:
+            # Extract keywords from query
+            query_keywords = set(self._extract_keywords(query))
+            if not query_keywords:
+                return []
+
             with get_dict_cursor() as cur:
-                # Build query dynamically
+                # Get all active correction patterns
                 sql = """
-                    SELECT error_type, error_pattern, correct_response,
+                    SELECT id, error_type, error_pattern, correct_response,
                            confidence, occurrence_count, correction_text
                     FROM correction_patterns
                     WHERE is_active = TRUE
@@ -268,41 +322,112 @@ class CorrectionLearner:
                     sql += " AND error_type = ANY(%s)"
                     params.append(error_types)
 
-                # Check if any pattern matches the query
-                sql += """
-                    ORDER BY
-                        CASE WHEN %s ILIKE '%%' || error_pattern || '%%' THEN 1 ELSE 2 END,
-                        confidence DESC,
-                        occurrence_count DESC
-                    LIMIT %s
-                """
-                params.extend([query, limit])
+                sql += " ORDER BY confidence DESC, occurrence_count DESC LIMIT 100"
 
                 cur.execute(sql, params)
                 rows = cur.fetchall()
 
-            # Filter to only matching patterns
-            corrections = []
-            query_lower = query.lower()
+            # Score each pattern by keyword relevance
+            scored_corrections = []
             for row in rows:
-                pattern = row["error_pattern"].lower()
-                if pattern in query_lower or self._fuzzy_match(pattern, query_lower):
-                    corrections.append(dict(row))
+                pattern = row["error_pattern"]
+                pattern_keywords = set(self._extract_keywords(pattern))
 
-            return corrections
+                # Calculate relevance score
+                score = self._calculate_keyword_score(
+                    query_keywords, pattern_keywords, query.lower(), pattern.lower()
+                )
+
+                if score > 0:
+                    result = dict(row)
+                    result["relevance_score"] = score
+                    scored_corrections.append(result)
+
+            # Sort by relevance score, then confidence
+            scored_corrections.sort(
+                key=lambda x: (x["relevance_score"], x["confidence"]),
+                reverse=True
+            )
+
+            result = scored_corrections[:limit]
+
+            # Track which corrections were retrieved (for analytics)
+            if result:
+                self._log_corrections_retrieved([c["id"] for c in result])
+
+            return result
 
         except Exception as e:
             logger.error(f"Failed to get corrections: {e}")
             return []
 
-    def _fuzzy_match(self, pattern: str, text: str, threshold: float = 0.7) -> bool:
-        """Simple fuzzy matching - checks if enough words from pattern appear in text."""
-        pattern_words = set(pattern.split())
-        text_words = set(text.split())
-        if not pattern_words:
+    def _log_corrections_retrieved(self, correction_ids: List[int]):
+        """Track that corrections were retrieved and used."""
+        try:
+            with get_cursor() as cur:
+                cur.execute("""
+                    UPDATE correction_patterns
+                    SET times_applied = COALESCE(times_applied, 0) + 1,
+                        last_triggered = NOW()
+                    WHERE id = ANY(%s)
+                """, (correction_ids,))
+        except Exception as e:
+            logger.debug(f"Failed to track correction usage: {e}")
+
+    def _calculate_keyword_score(
+        self,
+        query_keywords: set,
+        pattern_keywords: set,
+        query_text: str,
+        pattern_text: str
+    ) -> float:
+        """
+        Calculate relevance score between query and pattern.
+
+        Returns 0-1 score where:
+        - 1.0 = exact match or high keyword overlap
+        - 0.5+ = significant keyword overlap
+        - 0.0 = no relevance
+        """
+        # Exact substring match = highest score
+        if pattern_text in query_text:
+            return 1.0
+
+        # No keywords in pattern = skip
+        if not pattern_keywords:
+            return 0.0
+
+        # Calculate keyword overlap
+        common_keywords = query_keywords & pattern_keywords
+        if not common_keywords:
+            return 0.0
+
+        # Jaccard similarity with boost for pattern coverage
+        pattern_coverage = len(common_keywords) / len(pattern_keywords)
+        query_coverage = len(common_keywords) / len(query_keywords) if query_keywords else 0
+
+        # Weight pattern coverage more (we want patterns that match the query)
+        score = (pattern_coverage * 0.7) + (query_coverage * 0.3)
+
+        # Boost for multiple keyword matches
+        if len(common_keywords) >= 3:
+            score = min(1.0, score + 0.1)
+        elif len(common_keywords) >= 2:
+            score = min(1.0, score + 0.05)
+
+        # Minimum threshold
+        return score if score >= 0.3 else 0.0
+
+    def _fuzzy_match(self, pattern: str, text: str, threshold: float = 0.5) -> bool:
+        """Keyword-based fuzzy matching."""
+        pattern_keywords = set(self._extract_keywords(pattern))
+        text_keywords = set(self._extract_keywords(text))
+
+        if not pattern_keywords:
             return False
-        match_count = len(pattern_words & text_words)
-        return match_count / len(pattern_words) >= threshold
+
+        match_count = len(pattern_keywords & text_keywords)
+        return match_count / len(pattern_keywords) >= threshold
 
     # ==================== PROCESS CORRECTION ====================
 
@@ -424,7 +549,8 @@ class CorrectionLearner:
                     SELECT COUNT(*) as total,
                            COUNT(CASE WHEN is_verified THEN 1 END) as verified,
                            AVG(confidence) as avg_confidence,
-                           AVG(occurrence_count) as avg_occurrences
+                           AVG(occurrence_count) as avg_occurrences,
+                           SUM(COALESCE(times_applied, 0)) as total_applied
                     FROM correction_patterns
                     WHERE is_active = TRUE
                 """)
@@ -453,11 +579,13 @@ class CorrectionLearner:
                 "success": True,
                 "total_patterns": totals["total"],
                 "verified_patterns": totals["verified"],
+                "times_applied": totals["total_applied"] or 0,
                 "avg_confidence": round(totals["avg_confidence"] or 0, 3),
                 "avg_occurrences": round(totals["avg_occurrences"] or 0, 1),
                 "by_type": by_type,
                 "recent_actions": recent_actions,
-                "period_days": days
+                "period_days": days,
+                "status": "active" if totals["total"] > 0 else "no_patterns"
             }
 
         except Exception as e:

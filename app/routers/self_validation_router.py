@@ -6,7 +6,7 @@ Phase 19: Self-Awareness Tools
 """
 
 from fastapi import APIRouter, Query
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 router = APIRouter(prefix="/self", tags=["self-validation"])
 
@@ -201,6 +201,24 @@ async def get_self_validation_dashboard():
 
     service = get_self_validation_service()
     return service.dashboard_snapshot()
+
+
+@router.get("/reality-check-snapshot", response_model=Dict[str, Any])
+async def get_reality_check_snapshot(
+    hours: int = Query(default=168, ge=1, le=720, description="Hours to analyze"),
+    days: int = Query(default=7, ge=1, le=90, description="Days window for continuity checks"),
+    user_id: Optional[int] = Query(default=None, description="Optional user for continuity checks"),
+):
+    """
+    Return a compact deploy-time reality-check snapshot.
+
+    Payload includes the four dimensions: agency, memory, proactive, calibration,
+    each with pass/warn/fail/no_data metric statuses.
+    """
+    from ..services.self_validation_service import get_self_validation_service
+
+    service = get_self_validation_service()
+    return service.reality_check_snapshot(hours=hours, days=days, user_id=user_id)
 
 
 # =============================================================================

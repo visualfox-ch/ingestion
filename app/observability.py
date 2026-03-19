@@ -5,6 +5,8 @@ Observability utilities for Jarvis
 - Caching utilities
 - Phase 2.2: Structured logging with trace context
 """
+from __future__ import annotations
+
 import logging
 import json
 import time

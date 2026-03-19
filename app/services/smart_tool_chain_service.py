@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from collections import defaultdict
 import json
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,11 @@ class SmartToolChainService:
                     ORDER BY created_at ASC
                 """, (days,))
 
-                rows = cur.fetchall()
+                # Convert to list of dicts for _extract_chains
+                rows = []
+                columns = ['tool_name', 'tool_input', 'created_at', 'success']
+                for row in cur.fetchall():
+                    rows.append(dict(zip(columns, row)))
 
                 # Group into chains
                 chains = self._extract_chains(rows)
@@ -236,7 +240,7 @@ class SmartToolChainService:
             Dict with suggested chains and reasoning
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 suggestions = []
 
                 # 1. Find chains starting with trigger tool
@@ -331,7 +335,7 @@ class SmartToolChainService:
     ) -> Dict[str, Any]:
         """Get top tool chains by usage."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     SELECT chain_tools, chain_length, occurrence_count,
                            success_count, trigger_keywords
@@ -378,7 +382,7 @@ class SmartToolChainService:
             limit: Max chains to return
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 if position == "start":
                     cur.execute("""
                         SELECT chain_tools, occurrence_count, success_count

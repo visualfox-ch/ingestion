@@ -59,6 +59,48 @@ TOOL_EXECUTIONS = Counter(
     ['tool_name', 'status']
 )
 
+# Tool blocked by guardrails
+TOOL_BLOCKED = Counter(
+    'jarvis_tool_blocked_total',
+    'Tools blocked by guardrails system',
+    ['tool_name', 'guardrail_type', 'risk_tier']
+)
+
+# Tool latency by name
+TOOL_LATENCY = Histogram(
+    'jarvis_tool_latency_seconds',
+    'Tool execution latency in seconds',
+    ['tool_name'],
+    buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
+)
+
+# Calendar provider routing metrics (Phase A hybrid: n8n primary, cli fallback)
+CALENDAR_PROVIDER_REQUESTS_TOTAL = Counter(
+    'jarvis_calendar_provider_requests_total',
+    'Calendar provider requests by provider/account/result',
+    ['provider', 'account', 'result']
+)
+
+CALENDAR_PROVIDER_LATENCY_SECONDS = Histogram(
+    'jarvis_calendar_provider_latency_seconds',
+    'Calendar provider latency in seconds by provider/account',
+    ['provider', 'account'],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)
+)
+
+CALENDAR_PROVIDER_FALLBACK_TOTAL = Counter(
+    'jarvis_calendar_provider_fallback_total',
+    'Calendar provider fallback transitions',
+    ['from_provider', 'to_provider', 'reason', 'account']
+)
+
+# Backward-compat endpoint usage to support deprecation decisions.
+CALENDAR_EVENTS_ALIAS_REQUESTS_TOTAL = Counter(
+    'jarvis_calendar_events_alias_requests_total',
+    'Requests to legacy /n8n/calendar/events endpoint by account',
+    ['account']
+)
+
 # Agentic loop metrics
 AGENT_ROUNDS = Histogram(
     'agent_rounds_distribution',

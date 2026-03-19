@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional
 import json
 import hashlib
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class ContextualToolRouter:
     def _ensure_tables(self):
         """Ensure routing tables exist."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS tool_routing_rules (
                         id SERIAL PRIMARY KEY,
@@ -116,7 +116,7 @@ class ContextualToolRouter:
             priority: Rule priority (higher = checked first)
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     INSERT INTO tool_routing_rules
                     (rule_name, context_conditions, target_tools, fallback_tool, priority)
@@ -171,7 +171,7 @@ class ContextualToolRouter:
 
             recommendations = []
 
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # 1. Check explicit routing rules
                 cur.execute("""
                     SELECT rule_name, context_conditions, target_tools, fallback_tool
@@ -325,7 +325,7 @@ class ContextualToolRouter:
             context = context or {}
             query_hash = hashlib.md5(query.encode()).hexdigest()
 
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Record history
                 cur.execute("""
                     INSERT INTO tool_routing_history
@@ -391,7 +391,7 @@ class ContextualToolRouter:
     def get_routing_rules(self, active_only: bool = True) -> Dict[str, Any]:
         """Get all routing rules."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 if active_only:
                     cur.execute("""
                         SELECT rule_name, context_conditions, target_tools,
@@ -436,7 +436,7 @@ class ContextualToolRouter:
     ) -> Dict[str, Any]:
         """Get learned tool affinities."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 if tool_name:
                     cur.execute("""
                         SELECT context_key, affinity_score, success_count, total_count

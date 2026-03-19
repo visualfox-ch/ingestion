@@ -295,6 +295,66 @@ class OpenAIProvider(LLMProvider):
             }
 
 
+class OllamaProvider(LLMProvider):
+    """Ollama local provider via the shared OpenAI-compatible client."""
+
+    provider_name = "ollama"
+
+    def __init__(self):
+        from ..services.ollama_client import OllamaClient
+
+        self.client = OllamaClient()
+
+    def get_api_key(self) -> str:
+        """Return the optional Ollama API key when configured."""
+        return os.environ.get("JARVIS_OLLAMA_API_KEY") or os.environ.get("OLLAMA_API_KEY") or ""
+
+    def call(
+        self,
+        messages: List[Dict[str, str]],
+        system: str,
+        model: str,
+        max_tokens: int,
+        temperature: float = 0.7,
+        **kwargs
+    ) -> tuple[str, Dict[str, Any]]:
+        """Call Ollama using the shared client."""
+        result = self.client.chat(
+            model=model,
+            messages=messages,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        if not result.success:
+            raise RuntimeError(result.error or "Ollama request failed")
+
+        usage = {
+            "input_tokens": result.prompt_tokens,
+            "output_tokens": result.completion_tokens,
+        }
+        return result.content, usage
+
+    def calculate_cost(
+        self,
+        model: str,
+        input_tokens: int,
+        output_tokens: int
+    ) -> float:
+        """Local Ollama runs have no per-token API bill from Jarvis' perspective."""
+        return 0.0
+
+    def health_check(self) -> Dict[str, Any]:
+        """Report whether the Ollama endpoint is configured."""
+        return {
+            "status": "healthy",
+            "provider": "ollama",
+            "configured": bool(self.client.base_url),
+            "base_url": self.client.base_url,
+        }
+
+
 # ============ Provider Registry ============
 
 _providers = {}
@@ -308,6 +368,8 @@ def get_provider(provider_name: str) -> LLMProvider:
             _providers[provider_name] = AnthropicProvider()
         elif provider_name == "openai":
             _providers[provider_name] = OpenAIProvider()
+        elif provider_name == "ollama":
+            _providers[provider_name] = OllamaProvider()
         else:
             raise ValueError(f"Unknown provider: {provider_name}")
     
@@ -318,7 +380,7 @@ def get_all_providers() -> List[LLMProvider]:
     """Get all configured providers"""
     providers = []
     
-    for name in ["anthropic", "openai"]:
+    for name in ["anthropic", "openai", "ollama"]:
         try:
             providers.append(get_provider(name))
         except ValueError:

@@ -16,7 +16,7 @@ import json
 import hashlib
 import math
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class PatternRecognitionService:
         Finds patterns like "most active hours", "weekend vs weekday", etc.
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Hourly distribution
                 cur.execute("""
                     SELECT
@@ -207,7 +207,7 @@ class PatternRecognitionService:
         Finds co-occurrence patterns within a time window.
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     SELECT tool_name, created_at
                     FROM tool_audit
@@ -295,7 +295,7 @@ class PatternRecognitionService:
         Groups queries with similar patterns for better prediction.
         """
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Get recent queries with their tool outcomes
                 cur.execute("""
                     SELECT tool_input, tool_name, success
@@ -420,7 +420,7 @@ class PatternRecognitionService:
         try:
             anomalies = []
 
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Check for unusual failure rates
                 cur.execute("""
                     SELECT tool_name,
@@ -507,7 +507,7 @@ class PatternRecognitionService:
 
             last_tool = recent_tools[-1]
 
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Find tools that commonly follow the last tool
                 cur.execute("""
                     SELECT chain_tools
@@ -594,7 +594,7 @@ class PatternRecognitionService:
     ) -> Dict[str, Any]:
         """Get recognized patterns."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 if pattern_type:
                     cur.execute("""
                         SELECT pattern_type, pattern_name, pattern_data,

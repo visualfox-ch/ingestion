@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 import threading
 
 from .observability import get_logger, log_with_context, metrics
+from .services.ollama_client import OllamaClient
 
 logger = get_logger("jarvis.model_router")
 
@@ -34,6 +35,7 @@ class Provider(str, Enum):
     """LLM Provider."""
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
+    OLLAMA = "ollama"
 
 
 class AgentRole(str, Enum):
@@ -61,7 +63,26 @@ class ModelConfig:
 
 
 # Model configurations (prices as of 2026-03)
+OLLAMA_DEFAULT_MODEL = os.environ.get("JARVIS_OLLAMA_DEFAULT_MODEL", "qwen2.5:7b-instruct")
+OLLAMA_FAST_MODEL = os.environ.get("JARVIS_OLLAMA_FAST_MODEL", OLLAMA_DEFAULT_MODEL)
+OLLAMA_GENERAL_MODEL = os.environ.get("JARVIS_OLLAMA_GENERAL_MODEL", OLLAMA_DEFAULT_MODEL)
+
 MODELS = {
+    # Ollama (local-first, zero marginal token cost)
+    "ollama-fast": ModelConfig(
+        provider=Provider.OLLAMA,
+        model_id=OLLAMA_FAST_MODEL,
+        max_tokens=500,
+        input_price_per_1k=0.0,
+        output_price_per_1k=0.0
+    ),
+    "ollama-general": ModelConfig(
+        provider=Provider.OLLAMA,
+        model_id=OLLAMA_GENERAL_MODEL,
+        max_tokens=2500,
+        input_price_per_1k=0.0,
+        output_price_per_1k=0.0
+    ),
     # Anthropic - Updated model IDs for Claude 4.5/4.6
     "claude-haiku-4-5-20251001": ModelConfig(
         provider=Provider.ANTHROPIC,
@@ -94,6 +115,27 @@ MODELS = {
     ),
 }
 
+MODEL_ALIASES = {
+    "gpt-4o-2024-11-20": "gpt-4o",
+    "gpt-4o-mini-2024-07-18": "gpt-4o-mini",
+}
+
+
+def resolve_model_config(model_id: str) -> Optional[ModelConfig]:
+    """Resolve dynamic-router aliases to a canonical model config."""
+    canonical_id = MODEL_ALIASES.get(model_id, model_id)
+    if canonical_id in MODELS:
+        return MODELS[canonical_id]
+    if model_id == OLLAMA_FAST_MODEL:
+        return MODELS.get("ollama-fast")
+    if model_id == OLLAMA_GENERAL_MODEL:
+        return MODELS.get("ollama-general")
+    if model_id.startswith("gpt-4o-mini-"):
+        return MODELS.get("gpt-4o-mini")
+    if model_id.startswith("gpt-4o-"):
+        return MODELS.get("gpt-4o")
+    return None
+
 
 # Role -> Model mappings (primary and fallback)
 ROLE_ROUTING = {
@@ -121,6 +163,9 @@ TASK_ROUTING_PREFERENCES = {
     "ops": {"specialist": Provider.ANTHROPIC, "reviewer": Provider.ANTHROPIC},  # Safety-critical
     "writing": {"specialist": Provider.OPENAI, "reviewer": Provider.ANTHROPIC},
     "research": {"specialist": Provider.ANTHROPIC, "reviewer": Provider.OPENAI},
+    "general_chat": {"specialist": Provider.OLLAMA, "reviewer": Provider.OPENAI},
+    "cheap_local": {"specialist": Provider.OLLAMA, "reviewer": Provider.OPENAI},
+    "speed": {"specialist": Provider.OLLAMA, "reviewer": Provider.OPENAI},
 }
 
 
@@ -249,11 +294,13 @@ class ModelRouter:
         self._circuits: Dict[Provider, CircuitState] = {
             Provider.ANTHROPIC: CircuitState(),
             Provider.OPENAI: CircuitState(),
+            Provider.OLLAMA: CircuitState(),
         }
 
         # Clients (lazy-loaded)
         self._anthropic_client = None
         self._openai_client = None
+        self._ollama_client = None
 
         # OpenAI Responses API: track last response ID per session for multi-turn
         self._last_openai_response_id: Optional[str] = None
@@ -287,6 +334,30 @@ class ModelRouter:
                 raise ValueError("OPENAI_API_KEY not configured")
             self._openai_client = OpenAI(api_key=api_key)
         return self._openai_client
+
+    def _get_ollama_client(self) -> OllamaClient:
+        """Get or create Ollama client."""
+        if self._ollama_client is None:
+            self._ollama_client = OllamaClient()
+        return self._ollama_client
+
+    def _get_role_provider_model_id(self, role: AgentRole, provider: Provider) -> Optional[str]:
+        """Select the role-appropriate model for a provider."""
+        role_specific_candidates = {
+            AgentRole.PLANNER: ["ollama-fast", "claude-haiku-4-5-20251001", "gpt-4o-mini"],
+            AgentRole.SPECIALIST: ["ollama-general", "claude-sonnet-4-20250514", "gpt-4o"],
+            AgentRole.REVIEWER: ["ollama-fast", "claude-haiku-4-5-20251001", "gpt-4o-mini"],
+        }
+
+        for model_id in role_specific_candidates[role]:
+            config = MODELS.get(model_id)
+            if config and config.provider == provider:
+                return model_id
+
+        return next(
+            (model_id for model_id, config in MODELS.items() if config.provider == provider),
+            None,
+        )
 
     def is_provider_available(self, provider: Provider) -> bool:
         """Check if provider is available (circuit closed)."""
@@ -326,15 +397,9 @@ class ModelRouter:
             preferred_provider = prefs.get(role_key)
 
             if preferred_provider:
-                # Find model matching preferred provider
-                for model_id, config in MODELS.items():
-                    if config.provider == preferred_provider:
-                        if role == AgentRole.PLANNER and "haiku" in model_id or "mini" in model_id:
-                            primary_model_id = model_id
-                            break
-                        elif role == AgentRole.SPECIALIST and ("sonnet" in model_id or model_id == "gpt-4o"):
-                            primary_model_id = model_id
-                            break
+                preferred_model_id = self._get_role_provider_model_id(role, preferred_provider)
+                if preferred_model_id:
+                    primary_model_id = preferred_model_id
 
         # Cross-provider preference (for reviewers)
         if prefer_cross_provider and previous_provider:
@@ -384,6 +449,8 @@ class ModelRouter:
         try:
             if model_config.provider == Provider.ANTHROPIC:
                 result = self._call_anthropic(model_config, messages, system_prompt, tools, max_tokens)
+            elif model_config.provider == Provider.OLLAMA:
+                result = self._call_ollama(model_config, messages, system_prompt, max_tokens)
             else:
                 result = self._call_openai(
                     model_config, messages, system_prompt, tools, max_tokens,
@@ -410,25 +477,33 @@ class ModelRouter:
             self._circuits[model_config.provider].record_failure()
             metrics.inc("model_router_failure")
 
-            # Find fallback model
-            fallback_provider = (
-                Provider.OPENAI if model_config.provider == Provider.ANTHROPIC
-                else Provider.ANTHROPIC
-            )
+            for fallback_provider in self._get_fallback_provider_chain(model_config.provider):
+                if not self.is_provider_available(fallback_provider):
+                    continue
 
-            if not self.is_provider_available(fallback_provider):
-                raise RuntimeError(f"Both providers unavailable: {e}")
+                fallback_model_id = self._get_equivalent_model(model_config.model_id, fallback_provider)
+                fallback_config = resolve_model_config(fallback_model_id)
+                if fallback_config is None:
+                    continue
 
-            # Get equivalent model from fallback provider
-            fallback_model_id = self._get_equivalent_model(model_config.model_id, fallback_provider)
-            fallback_config = MODELS[fallback_model_id]
+                log_with_context(logger, "info", "Falling back to alternate provider",
+                               original=model_config.model_id,
+                               fallback_provider=fallback_provider.value,
+                               fallback=fallback_config.model_id)
 
-            log_with_context(logger, "info", "Falling back to alternate provider",
-                           original=model_config.model_id, fallback=fallback_model_id)
+                return self.execute_with_fallback(
+                    fallback_config, messages, system_prompt, tools, max_tokens
+                )
 
-            return self.execute_with_fallback(
-                fallback_config, messages, system_prompt, tools, max_tokens
-            )
+            raise RuntimeError(f"No fallback provider available after failure: {e}")
+
+    def _get_fallback_provider_chain(self, provider: Provider) -> List[Provider]:
+        """Return the ordered fallback chain for a provider."""
+        if provider == Provider.OLLAMA:
+            return [Provider.OPENAI, Provider.ANTHROPIC]
+        if provider == Provider.ANTHROPIC:
+            return [Provider.OPENAI, Provider.OLLAMA]
+        return [Provider.ANTHROPIC, Provider.OLLAMA]
 
     def _get_equivalent_model(self, model_id: str, target_provider: Provider) -> str:
         """Get equivalent model from different provider."""
@@ -438,8 +513,48 @@ class ModelRouter:
             "claude-sonnet-4-20250514": "gpt-4o",
             "gpt-4o-mini": "claude-haiku-4-5-20251001",
             "gpt-4o": "claude-sonnet-4-20250514",
+            OLLAMA_FAST_MODEL: "gpt-4o-mini",
+            OLLAMA_GENERAL_MODEL: "gpt-4o",
         }
-        return equivalents.get(model_id, "gpt-4o" if target_provider == Provider.OPENAI else "claude-sonnet-4-20250514")
+        if target_provider == Provider.OLLAMA:
+            if any(token in model_id for token in ("mini", "haiku", "fast")):
+                return OLLAMA_FAST_MODEL
+            return OLLAMA_GENERAL_MODEL
+
+        if target_provider == Provider.OPENAI:
+            return equivalents.get(model_id, "gpt-4o")
+
+        return equivalents.get(model_id, "claude-sonnet-4-20250514")
+
+    def _call_ollama(
+        self,
+        model_config: ModelConfig,
+        messages: List[Dict[str, Any]],
+        system_prompt: str,
+        max_tokens: int,
+    ) -> Dict[str, Any]:
+        """Call Ollama through the shared OpenAI-compatible client."""
+        client = self._get_ollama_client()
+        result = client.chat(
+            model=model_config.model_id,
+            messages=messages,
+            system=system_prompt,
+            max_tokens=max_tokens,
+        )
+
+        if not result.success:
+            raise RuntimeError(result.error or "Ollama request failed")
+
+        return {
+            "content": [{"type": "text", "text": result.content}],
+            "usage": {
+                "input_tokens": result.prompt_tokens,
+                "output_tokens": result.completion_tokens,
+            },
+            "model": result.model,
+            "provider": Provider.OLLAMA.value,
+            "stop_reason": "end_turn" if result.stop_reason == "stop" else result.stop_reason,
+        }
 
     def _call_anthropic(
         self,
@@ -534,33 +649,11 @@ class ModelRouter:
         """
         client = self._get_openai_client()
 
-        # Build input for Responses API
-        # Responses API accepts input as string or list of message objects
-        input_messages = []
-
-        # Add system message as developer role (Responses API convention)
-        input_messages.append({
-            "role": "developer",
-            "content": system_prompt
-        })
-
-        # Convert messages format (Anthropic -> OpenAI Responses)
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            if isinstance(content, list):
-                # Handle tool results - convert to text format
-                text_parts = []
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "text":
-                            text_parts.append(item.get("text", ""))
-                        elif item.get("type") == "tool_result":
-                            text_parts.append(f"[Tool Result: {item.get('content', '')}]")
-                content = "\n".join(text_parts) if text_parts else str(content)
-
-            input_messages.append({"role": role, "content": content})
+        input_messages = self._build_openai_input_messages(
+            messages=messages,
+            system_prompt=system_prompt,
+            previous_response_id=previous_response_id,
+        )
 
         # Convert tools format for Responses API
         openai_tools = None
@@ -612,6 +705,7 @@ class ModelRouter:
 
         # Extract content from Responses API format
         content = []
+        saw_function_call = False
 
         # Handle output_text (simple text response)
         if hasattr(response, 'output_text') and response.output_text:
@@ -630,6 +724,7 @@ class ModelRouter:
                                         content.append({"type": "text", "text": c.text})
                     elif item.type == "function_call":
                         import json
+                        saw_function_call = True
                         content.append({
                             "type": "tool_use",
                             "id": item.call_id if hasattr(item, 'call_id') else item.id,
@@ -643,7 +738,7 @@ class ModelRouter:
             "incomplete": "max_tokens",
         }
         status = getattr(response, 'status', 'completed')
-        stop_reason = stop_reason_map.get(status, status)
+        stop_reason = "tool_use" if saw_function_call else stop_reason_map.get(status, status)
 
         # Extract usage (Responses API format)
         usage = {"input_tokens": 0, "output_tokens": 0}
@@ -659,6 +754,91 @@ class ModelRouter:
             "stop_reason": stop_reason,
             "openai_response_id": response.id  # O2: Return for multi-turn chaining
         }
+
+    def _build_openai_input_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        system_prompt: str,
+        previous_response_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Convert shared agent messages into Responses API input items."""
+        input_messages: List[Dict[str, Any]] = [
+            {"role": "developer", "content": system_prompt}
+        ]
+
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+
+            if role == "tool":
+                input_messages.extend(self._build_openai_tool_outputs(content))
+                continue
+
+            converted_content = self._flatten_openai_message_content(
+                content=content,
+                previous_response_id=previous_response_id,
+            )
+            if converted_content is None:
+                continue
+
+            input_messages.append({"role": role, "content": converted_content})
+
+        return input_messages
+
+    def _build_openai_tool_outputs(self, content: Any) -> List[Dict[str, Any]]:
+        """Convert normalized tool results into Responses API function outputs."""
+        outputs: List[Dict[str, Any]] = []
+
+        if not isinstance(content, list):
+            return outputs
+
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "tool_result":
+                continue
+
+            outputs.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": item.get("tool_use_id"),
+                    "output": item.get("content", ""),
+                }
+            )
+
+        return outputs
+
+    def _flatten_openai_message_content(
+        self,
+        content: Any,
+        previous_response_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Flatten shared message content into the text form Responses API accepts."""
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            for item in content:
+                if not isinstance(item, dict):
+                    text_parts.append(str(item))
+                    continue
+
+                item_type = item.get("type")
+                if item_type == "text":
+                    text_value = item.get("text", "")
+                    if text_value:
+                        text_parts.append(text_value)
+                elif item_type == "tool_result":
+                    text_parts.append(f"[Tool Result: {item.get('content', '')}]")
+                elif item_type == "tool_use" and not previous_response_id:
+                    tool_name = item.get("name", "tool")
+                    text_parts.append(f"[Tool Call Requested: {tool_name}]")
+
+            if not text_parts:
+                return None
+
+            return "\n".join(text_parts)
+
+        if content is None:
+            return None
+
+        return content
 
 
     def get_last_openai_response_id(self) -> Optional[str]:

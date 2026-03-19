@@ -20,7 +20,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from collections import defaultdict
 from dataclasses import dataclass, asdict
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +213,7 @@ class MLPatternService:
     ) -> List[TimeSeriesPoint]:
         """Get time series data for a metric."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 if dimensions:
                     cur.execute("""
                         SELECT timestamp, value, dimensions
@@ -742,7 +742,7 @@ class MLPatternService:
     ) -> Dict[str, Any]:
         """Get unacknowledged alerts."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 if severity:
                     cur.execute("""
                         SELECT alert_type, severity, metric_name, message,
@@ -948,7 +948,7 @@ class MLPatternService:
     def get_pattern_summary(self) -> Dict[str, Any]:
         """Get summary of all detected patterns."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Get seasonal patterns
                 cur.execute("""
                     SELECT metric_name, pattern_type, amplitude,

@@ -18,6 +18,7 @@ from app.model_router import (
     Provider, AgentRole, ModelConfig, CircuitState, CostTracker,
     ModelRouter, MODELS, ROLE_ROUTING, TASK_ROUTING_PREFERENCES
 )
+from app.services.ollama_client import OllamaChatResult
 
 
 class TestModelConfig:
@@ -176,7 +177,7 @@ class TestCostTracker:
         tracker = CostTracker(daily_budget_usd=10.0)
 
         # Add cost for haiku (cheap model)
-        daily_total = tracker.add_cost("claude-3-5-haiku-20241022", input_tokens=1000, output_tokens=500)
+        daily_total = tracker.add_cost("claude-haiku-4-5-20251001", input_tokens=1000, output_tokens=500)
 
         # 1000 input @ $0.001/1k = $0.001
         # 500 output @ $0.005/1k = $0.0025
@@ -237,7 +238,7 @@ class TestModelRouter:
         """In multi-model mode, planner should use Haiku."""
         router = ModelRouter(multi_model_enabled=True)
         config = router.route_request(role=AgentRole.PLANNER)
-        assert config.model_id == "claude-3-5-haiku-20241022"
+        assert config.model_id == "claude-haiku-4-5-20251001"
 
     def test_multi_model_specialist_returns_sonnet(self):
         """In multi-model mode, specialist should use Sonnet."""
@@ -249,7 +250,13 @@ class TestModelRouter:
         """In multi-model mode, reviewer should use Haiku by default."""
         router = ModelRouter(multi_model_enabled=True)
         config = router.route_request(role=AgentRole.REVIEWER)
-        assert config.model_id == "claude-3-5-haiku-20241022"
+        assert config.model_id == "claude-haiku-4-5-20251001"
+
+    def test_general_chat_prefers_ollama_specialist(self):
+        """General chat should route the specialist role to Ollama first."""
+        router = ModelRouter(multi_model_enabled=True)
+        config = router.route_request(role=AgentRole.SPECIALIST, task_type="general_chat")
+        assert config.provider == Provider.OLLAMA
 
     def test_cross_provider_preference(self):
         """Cross-provider review should use different provider."""
@@ -297,14 +304,14 @@ class TestModelRouter:
         """Should map Anthropic models to OpenAI equivalents."""
         router = ModelRouter()
 
-        assert router._get_equivalent_model("claude-3-5-haiku-20241022", Provider.OPENAI) == "gpt-4o-mini"
+        assert router._get_equivalent_model("claude-haiku-4-5-20251001", Provider.OPENAI) == "gpt-4o-mini"
         assert router._get_equivalent_model("claude-sonnet-4-20250514", Provider.OPENAI) == "gpt-4o"
 
     def test_get_equivalent_model_openai_to_anthropic(self):
         """Should map OpenAI models to Anthropic equivalents."""
         router = ModelRouter()
 
-        assert router._get_equivalent_model("gpt-4o-mini", Provider.ANTHROPIC) == "claude-3-5-haiku-20241022"
+        assert router._get_equivalent_model("gpt-4o-mini", Provider.ANTHROPIC) == "claude-haiku-4-5-20251001"
         assert router._get_equivalent_model("gpt-4o", Provider.ANTHROPIC) == "claude-sonnet-4-20250514"
 
 
@@ -344,6 +351,11 @@ class TestTaskRoutingPreferences:
         prefs = TASK_ROUTING_PREFERENCES.get("ops", {})
         assert prefs.get("reviewer") == Provider.ANTHROPIC
 
+    def test_general_chat_prefers_ollama_specialist(self):
+        """General chat should prefer Ollama for local-first specialist work."""
+        prefs = TASK_ROUTING_PREFERENCES.get("general_chat", {})
+        assert prefs.get("specialist") == Provider.OLLAMA
+
 
 class TestModelRouterIntegration:
     """Integration tests (require mocking external APIs)."""
@@ -357,12 +369,14 @@ class TestModelRouterIntegration:
         mock_response.content = [MagicMock(type="text", text="Hello")]
         mock_response.usage.input_tokens = 100
         mock_response.usage.output_tokens = 50
+        mock_response.usage.cache_creation_input_tokens = 0
+        mock_response.usage.cache_read_input_tokens = 0
         mock_response.stop_reason = "end_turn"
         mock_client.messages.create.return_value = mock_response
         mock_get_client.return_value = mock_client
 
         router = ModelRouter(multi_model_enabled=True)
-        config = MODELS["claude-3-5-haiku-20241022"]
+        config = MODELS["claude-haiku-4-5-20251001"]
 
         with patch.object(router.cost_tracker, 'add_cost') as mock_add_cost:
             result = router.execute_with_fallback(
@@ -374,7 +388,7 @@ class TestModelRouterIntegration:
 
         assert result["stop_reason"] == "end_turn"
         assert result["provider"] == "anthropic"
-        mock_add_cost.assert_called_once_with("claude-3-5-haiku-20241022", 100, 50)
+        mock_add_cost.assert_called_once_with("claude-haiku-4-5-20251001", 100, 50)
 
     @patch.object(ModelRouter, '_get_anthropic_client')
     @patch.object(ModelRouter, '_get_openai_client')
@@ -384,16 +398,16 @@ class TestModelRouterIntegration:
         mock_anthropic.return_value.messages.create.side_effect = Exception("API Error")
 
         mock_openai_response = MagicMock()
-        mock_openai_response.choices = [MagicMock()]
-        mock_openai_response.choices[0].message.content = "Hello from OpenAI"
-        mock_openai_response.choices[0].message.tool_calls = None
-        mock_openai_response.choices[0].finish_reason = "stop"
-        mock_openai_response.usage.prompt_tokens = 100
-        mock_openai_response.usage.completion_tokens = 50
-        mock_openai.return_value.chat.completions.create.return_value = mock_openai_response
+        mock_openai_response.id = "resp_openai_fallback"
+        mock_openai_response.output_text = "Hello from OpenAI"
+        mock_openai_response.output = []
+        mock_openai_response.status = "completed"
+        mock_openai_response.usage.input_tokens = 100
+        mock_openai_response.usage.output_tokens = 50
+        mock_openai.return_value.responses.create.return_value = mock_openai_response
 
         router = ModelRouter(multi_model_enabled=True)
-        config = MODELS["claude-3-5-haiku-20241022"]
+        config = MODELS["claude-haiku-4-5-20251001"]
 
         with patch.object(router.cost_tracker, 'add_cost'):
             result = router.execute_with_fallback(
@@ -406,6 +420,45 @@ class TestModelRouterIntegration:
         # Should have fallen back to OpenAI
         assert result["provider"] == "openai"
         assert "Hello from OpenAI" in result["content"][0]["text"]
+
+    @patch.object(ModelRouter, '_get_openai_client')
+    @patch.object(ModelRouter, '_get_ollama_client')
+    def test_execute_with_fallback_from_ollama_to_openai(self, mock_ollama, mock_openai):
+        """Ollama failures should degrade cleanly to OpenAI."""
+        mock_ollama.return_value.chat.return_value = OllamaChatResult(
+            success=False,
+            content="",
+            model="qwen2.5:7b-instruct",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            duration_ms=5.0,
+            stop_reason="error",
+            error="connection refused",
+        )
+
+        mock_openai_response = MagicMock()
+        mock_openai_response.id = "resp_ollama_fallback"
+        mock_openai_response.output_text = "Fallback from OpenAI"
+        mock_openai_response.output = []
+        mock_openai_response.status = "completed"
+        mock_openai_response.usage.input_tokens = 40
+        mock_openai_response.usage.output_tokens = 12
+        mock_openai.return_value.responses.create.return_value = mock_openai_response
+
+        router = ModelRouter(multi_model_enabled=True)
+        config = MODELS["ollama-general"]
+
+        with patch.object(router.cost_tracker, 'add_cost'):
+            result = router.execute_with_fallback(
+                model_config=config,
+                messages=[{"role": "user", "content": "Hello"}],
+                system_prompt="You are helpful.",
+                tools=None,
+            )
+
+        assert result["provider"] == "openai"
+        assert "Fallback from OpenAI" in result["content"][0]["text"]
 
 
 if __name__ == "__main__":

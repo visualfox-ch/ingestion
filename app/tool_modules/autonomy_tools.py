@@ -781,6 +781,251 @@ def requires_autonomy_level(min_level: int, action_name: str):
     return decorator
 
 
+# ==================== TOOL RISK MANAGEMENT (Phase C4) ====================
+
+def reclassify_tool_risk(
+    tool_name: str,
+    new_risk_tier: int,
+    reason: str,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Reclassify a tool's risk tier.
+
+    Jarvis can learn which tools are risky based on experience.
+    Changes are logged in jarvis_self_modifications for audit.
+
+    Args:
+        tool_name: Name of the tool to reclassify
+        new_risk_tier: New risk tier (0=safe, 1=standard, 2=sensitive, 3=critical)
+        reason: Why the classification is being changed
+
+    Returns:
+        Dict with status and details
+    """
+    if new_risk_tier not in [0, 1, 2, 3]:
+        return {
+            "success": False,
+            "error": f"Invalid risk tier: {new_risk_tier}. Must be 0, 1, 2, or 3."
+        }
+
+    try:
+        from app.postgres_state import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                # Get current tier
+                cur.execute(
+                    "SELECT id, risk_tier FROM jarvis_tools WHERE name = %s",
+                    (tool_name,)
+                )
+                row = cur.fetchone()
+
+                if not row:
+                    return {"success": False, "error": f"Tool '{tool_name}' not found"}
+
+                tool_id = row[0] if isinstance(row, tuple) else row["id"]
+                old_tier = row[1] if isinstance(row, tuple) else row["risk_tier"]
+
+                if old_tier == new_risk_tier:
+                    return {
+                        "success": True,
+                        "message": f"Tool already at tier {new_risk_tier}",
+                        "changed": False
+                    }
+
+                # Update tier
+                cur.execute("""
+                    UPDATE jarvis_tools
+                    SET risk_tier = %s, updated_at = NOW()
+                    WHERE name = %s
+                """, (new_risk_tier, tool_name))
+
+                # Log the modification
+                cur.execute("""
+                    INSERT INTO jarvis_self_modifications
+                    (target_table, target_id, target_name, modification_type, old_value, new_value, reason)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    "jarvis_tools",
+                    tool_id,
+                    tool_name,
+                    "risk_update",  # Short enough for VARCHAR(20)
+                    json.dumps({"risk_tier": old_tier}),
+                    json.dumps({"risk_tier": new_risk_tier}),
+                    reason
+                ))
+
+                conn.commit()
+
+                tier_names = {0: "safe", 1: "standard", 2: "sensitive", 3: "critical"}
+
+                logger.info(f"Reclassified tool {tool_name}: tier {old_tier} -> {new_risk_tier}")
+
+                return {
+                    "success": True,
+                    "tool_name": tool_name,
+                    "old_tier": old_tier,
+                    "old_tier_name": tier_names.get(old_tier, "unknown"),
+                    "new_tier": new_risk_tier,
+                    "new_tier_name": tier_names.get(new_risk_tier, "unknown"),
+                    "reason": reason,
+                    "changed": True
+                }
+
+    except Exception as e:
+        logger.error(f"Failed to reclassify tool risk: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def get_tool_risk_history(
+    tool_name: str = None,
+    limit: int = 20,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Get history of tool risk reclassifications.
+
+    Args:
+        tool_name: Filter by specific tool (optional)
+        limit: Max number of records to return
+
+    Returns:
+        Dict with reclassification history
+    """
+    try:
+        from app.postgres_state import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if tool_name:
+                    cur.execute("""
+                        SELECT target_name, old_value, new_value, reason, created_at
+                        FROM jarvis_self_modifications
+                        WHERE target_table = 'jarvis_tools'
+                          AND modification_type = 'risk_update'
+                          AND target_name = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                    """, (tool_name, limit))
+                else:
+                    cur.execute("""
+                        SELECT target_name, old_value, new_value, reason, created_at
+                        FROM jarvis_self_modifications
+                        WHERE target_table = 'jarvis_tools'
+                          AND modification_type = 'risk_update'
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                    """, (limit,))
+
+                rows = cur.fetchall()
+
+                history = []
+                for row in rows:
+                    old_val = row[1] if isinstance(row, tuple) else row["old_value"]
+                    new_val = row[2] if isinstance(row, tuple) else row["new_value"]
+                    created = row[4] if isinstance(row, tuple) else row["created_at"]
+
+                    history.append({
+                        "tool_name": row[0] if isinstance(row, tuple) else row["target_name"],
+                        "old_tier": old_val.get("risk_tier") if old_val else None,
+                        "new_tier": new_val.get("risk_tier") if new_val else None,
+                        "reason": row[3] if isinstance(row, tuple) else row["reason"],
+                        "timestamp": created.isoformat() if created else None
+                    })
+
+                # Also get current tier distribution
+                cur.execute("""
+                    SELECT risk_tier, COUNT(*) as count
+                    FROM jarvis_tools
+                    WHERE enabled = true
+                    GROUP BY risk_tier
+                    ORDER BY risk_tier
+                """)
+
+                tier_names = {0: "safe", 1: "standard", 2: "sensitive", 3: "critical"}
+                distribution = {}
+                for row in cur.fetchall():
+                    tier = row[0] if isinstance(row, tuple) else row["risk_tier"]
+                    count = row[1] if isinstance(row, tuple) else row["count"]
+                    distribution[tier_names.get(tier, f"tier_{tier}")] = count
+
+                return {
+                    "success": True,
+                    "history": history,
+                    "history_count": len(history),
+                    "current_distribution": distribution,
+                    "filter_tool": tool_name
+                }
+
+    except Exception as e:
+        logger.error(f"Failed to get tool risk history: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def get_tools_by_risk_tier(
+    tier: int = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Get tools grouped by risk tier.
+
+    Args:
+        tier: Filter by specific tier (optional, 0-3)
+
+    Returns:
+        Dict with tools organized by risk tier
+    """
+    try:
+        from app.postgres_state import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if tier is not None:
+                    cur.execute("""
+                        SELECT name, category, risk_tier, use_count
+                        FROM jarvis_tools
+                        WHERE enabled = true AND risk_tier = %s
+                        ORDER BY use_count DESC
+                    """, (tier,))
+                else:
+                    cur.execute("""
+                        SELECT name, category, risk_tier, use_count
+                        FROM jarvis_tools
+                        WHERE enabled = true
+                        ORDER BY risk_tier, use_count DESC
+                    """)
+
+                rows = cur.fetchall()
+
+                tier_names = {0: "safe", 1: "standard", 2: "sensitive", 3: "critical"}
+                by_tier = {name: [] for name in tier_names.values()}
+
+                for row in rows:
+                    tool_tier = row[2] if isinstance(row, tuple) else row["risk_tier"]
+                    tier_name = tier_names.get(tool_tier, "unknown")
+
+                    if tier_name not in by_tier:
+                        by_tier[tier_name] = []
+
+                    by_tier[tier_name].append({
+                        "name": row[0] if isinstance(row, tuple) else row["name"],
+                        "category": row[1] if isinstance(row, tuple) else row["category"],
+                        "use_count": row[3] if isinstance(row, tuple) else row["use_count"]
+                    })
+
+                return {
+                    "success": True,
+                    "by_tier": by_tier,
+                    "counts": {k: len(v) for k, v in by_tier.items()},
+                    "filter_tier": tier
+                }
+
+    except Exception as e:
+        logger.error(f"Failed to get tools by risk tier: {e}")
+        return {"success": False, "error": str(e)}
+
+
 # Tool definitions for Claude (JSON-serializable)
 AUTONOMY_TOOLS = [
     {
@@ -934,6 +1179,61 @@ AUTONOMY_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {}
+        }
+    },
+    {
+        "name": "reclassify_tool_risk",
+        "description": "Reclassify a tool's risk tier based on experience. Tier 0=safe (always allowed), 1=standard, 2=sensitive (needs confirmation), 3=critical (needs override). Changes are logged for audit.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tool_name": {
+                    "type": "string",
+                    "description": "Name of the tool to reclassify"
+                },
+                "new_risk_tier": {
+                    "type": "integer",
+                    "enum": [0, 1, 2, 3],
+                    "description": "New risk tier: 0=safe, 1=standard, 2=sensitive, 3=critical"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why the risk classification is being changed"
+                }
+            },
+            "required": ["tool_name", "new_risk_tier", "reason"]
+        }
+    },
+    {
+        "name": "get_tool_risk_history",
+        "description": "Get history of tool risk reclassifications. Shows when and why tools were reclassified.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tool_name": {
+                    "type": "string",
+                    "description": "Filter by specific tool (optional)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Max number of records to return"
+                }
+            }
+        }
+    },
+    {
+        "name": "get_tools_by_risk_tier",
+        "description": "Get all tools grouped by their risk tier. Shows which tools are safe, standard, sensitive, or critical.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tier": {
+                    "type": "integer",
+                    "enum": [0, 1, 2, 3],
+                    "description": "Filter by specific tier (optional)"
+                }
+            }
         }
     }
 ]

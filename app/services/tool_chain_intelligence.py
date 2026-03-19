@@ -21,6 +21,8 @@ import json
 import re
 import hashlib
 
+from psycopg2.extras import RealDictCursor
+
 from ..observability import get_logger, log_with_context
 from ..postgres_state import get_conn
 
@@ -161,7 +163,7 @@ class ToolChainIntelligence:
 
         try:
             with get_conn() as conn:
-                with conn.cursor() as cur:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     # Find chains that match any of our keywords
                     cur.execute("""
                         SELECT

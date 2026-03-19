@@ -24,7 +24,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from collections import defaultdict
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -657,7 +657,7 @@ class AutoRefactorService:
     ) -> Dict[str, Any]:
         """Get pending refactoring suggestions."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 if category:
                     cur.execute("""
                         SELECT id, title, description, priority_score, estimated_hours,
@@ -709,7 +709,7 @@ class AutoRefactorService:
             return {"success": False, "error": f"Invalid status. Use: {valid_statuses}"}
 
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 timestamp_field = ""
                 if status == "in_progress":
                     timestamp_field = ", started_at = NOW()"
@@ -738,7 +738,7 @@ class AutoRefactorService:
     def get_refactoring_stats(self) -> Dict[str, Any]:
         """Get refactoring statistics."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 # Issue stats
                 cur.execute("""
                     SELECT
@@ -789,7 +789,7 @@ class AutoRefactorService:
     def get_file_issues(self, file_path: str) -> Dict[str, Any]:
         """Get all issues for a specific file."""
         try:
-            with get_cursor() as cur:
+            with get_dict_cursor() as cur:
                 cur.execute("""
                     SELECT issue_type, severity, line_start, line_end,
                            description, suggestion, effort_hours, impact_score

@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 
 from .observability import get_logger, log_with_context
 
@@ -24,7 +24,7 @@ BRAIN_ROOT = Path(os.environ.get("BRAIN_ROOT", "/brain"))
 CONFIG_DB_PATH = BRAIN_ROOT / "system" / "state" / "jarvis_config.db"
 
 # Thread safety
-_config_lock = Lock()
+_config_lock = RLock()
 
 
 @dataclass
@@ -123,6 +123,54 @@ CONFIG_SCHEMA: Dict[str, Dict[str, Any]] = {
         "category": "self_mod",
         "description": "Automatically test sandbox code"
     },
+    "sandbox_runtime_enabled": {
+        "default": False,
+        "type": "bool",
+        "category": "sandbox",
+        "description": "Enable the OpenSandbox-inspired runtime session API"
+    },
+    "sandbox_runtime_allow_network": {
+        "default": False,
+        "type": "bool",
+        "category": "sandbox",
+        "description": "Allow outbound network access inside runtime sandbox sessions"
+    },
+    "sandbox_runtime_timeout_seconds": {
+        "default": 15,
+        "type": "int",
+        "category": "sandbox",
+        "description": "Timeout in seconds for runtime sandbox executions"
+    },
+    "sandbox_runtime_max_code_bytes": {
+        "default": 20000,
+        "type": "int",
+        "category": "sandbox",
+        "description": "Maximum code payload size for runtime sandbox executions"
+    },
+    "sandbox_runtime_max_output_bytes": {
+        "default": 65536,
+        "type": "int",
+        "category": "sandbox",
+        "description": "Maximum stdout or stderr bytes returned from sandbox executions"
+    },
+    "sandbox_runtime_session_ttl_seconds": {
+        "default": 1800,
+        "type": "int",
+        "category": "sandbox",
+        "description": "Session lifetime in seconds before runtime sandbox cleanup"
+    },
+    "sandbox_runtime_max_artifacts": {
+        "default": 32,
+        "type": "int",
+        "category": "sandbox",
+        "description": "Maximum artifact entries returned per runtime sandbox execution"
+    },
+    "sandbox_runtime_max_sessions": {
+        "default": 4,
+        "type": "int",
+        "category": "sandbox",
+        "description": "Maximum concurrent runtime sandbox sessions"
+    },
 
     # Alerts
     "telegram_alerts_enabled": {
@@ -183,13 +231,19 @@ CONFIG_SCHEMA: Dict[str, Dict[str, Any]] = {
         "default": "anthropic",
         "type": "str",
         "category": "llm",
-        "description": "Preferred LLM provider: anthropic, openai"
+        "description": "Preferred LLM provider: anthropic, openai, ollama"
     },
     "llm_router_enabled": {
         "default": True,
         "type": "bool",
         "category": "llm",
         "description": "Enable smart model routing based on query complexity"
+    },
+    "agent_provider_agnostic_tool_loop_enabled": {
+        "default": False,
+        "type": "bool",
+        "category": "llm",
+        "description": "Enable the shared Anthropic/OpenAI tool loop path in the agent"
     },
     "llm_temperature": {
         "default": 0.7,
@@ -263,7 +317,27 @@ class LiveConfig:
         if self._initialized:
             return
         self._initialized = True
+        self._last_db_mtime_ns: int = 0
         self._init_db()
+        self._load_from_db()
+
+    def _get_db_mtime_ns(self) -> int:
+        """Return the current SQLite mtime for cross-worker cache invalidation."""
+        try:
+            return CONFIG_DB_PATH.stat().st_mtime_ns
+        except OSError:
+            return 0
+
+    def _refresh_from_db_if_needed(self) -> None:
+        """
+        Reload config if another worker updated the SQLite store.
+
+        Each worker keeps an in-memory copy, so reads must detect external
+        writes and refresh before returning stale values.
+        """
+        current_mtime_ns = self._get_db_mtime_ns()
+        if current_mtime_ns and current_mtime_ns == self._last_db_mtime_ns:
+            return
         self._load_from_db()
 
     def _init_db(self):
@@ -333,6 +407,8 @@ class LiveConfig:
                 conn.close()
             except Exception as e:
                 log_with_context(logger, "warning", "Failed to load config from DB", error=str(e))
+            finally:
+                self._last_db_mtime_ns = self._get_db_mtime_ns()
 
     def _serialize_value(self, value: Any, value_type: str) -> str:
         """Serialize value for storage."""
@@ -358,6 +434,7 @@ class LiveConfig:
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value."""
+        self._refresh_from_db_if_needed()
         with _config_lock:
             if key in self._config:
                 return self._config[key].value
@@ -365,6 +442,7 @@ class LiveConfig:
 
     def get_full(self, key: str) -> Optional[ConfigValue]:
         """Get full config value with metadata."""
+        self._refresh_from_db_if_needed()
         with _config_lock:
             return self._config.get(key)
 
@@ -440,6 +518,7 @@ class LiveConfig:
 
                 conn.commit()
                 conn.close()
+                self._last_db_mtime_ns = self._get_db_mtime_ns()
             except Exception as e:
                 log_with_context(logger, "error", "Failed to persist config", key=key, error=str(e))
                 return False
@@ -450,6 +529,7 @@ class LiveConfig:
 
     def get_all(self, category: str = None) -> Dict[str, Any]:
         """Get all config values, optionally filtered by category."""
+        self._refresh_from_db_if_needed()
         with _config_lock:
             result = {}
             for key, cv in self._config.items():
@@ -459,6 +539,7 @@ class LiveConfig:
 
     def get_all_full(self, category: str = None) -> Dict[str, Dict[str, Any]]:
         """Get all config values with metadata."""
+        self._refresh_from_db_if_needed()
         with _config_lock:
             result = {}
             for key, cv in self._config.items():

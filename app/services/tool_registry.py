@@ -1,140 +1,290 @@
 """
-Tool Registry Service - Phase 19.5
+Tool Registry Service - DEPRECATED (Phase C3)
 
-Database-backed tool registry that allows:
-- Enabling/disabling tools without deploy
-- Storing tool metadata and usage stats
-- Jarvis self-managing his toolset
+This module is now a thin wrapper around tool_autonomy.py (PostgreSQL).
+The SQLite-based registry is deprecated. All queries are redirected to PostgreSQL.
 
-Tables:
-- tool_registry: Tool definitions and status
-- tool_usage_stats: Aggregated usage statistics
+Migration: 2026-03-18
+Reason: Single source of truth in PostgreSQL, Jarvis can self-manage tools
 """
 from __future__ import annotations
 
-import os
-import json
-import sqlite3
+import warnings
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from pathlib import Path
-from threading import Lock
 
 from ..observability import get_logger, log_with_context
 
 logger = get_logger("jarvis.tool_registry")
 
-# Database path
-BRAIN_ROOT = Path(os.environ.get("BRAIN_ROOT", "/brain"))
-REGISTRY_DB_PATH = BRAIN_ROOT / "system" / "state" / "tool_registry.db"
+# Emit deprecation warning on import
+warnings.warn(
+    "tool_registry (SQLite) is deprecated. Use tool_autonomy (PostgreSQL) directly.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
-_db_lock = Lock()
+
+def _get_autonomy_service():
+    """Get the PostgreSQL-backed tool autonomy service."""
+    from .tool_autonomy import get_tool_autonomy_service
+    return get_tool_autonomy_service()
 
 
-def _get_conn() -> sqlite3.Connection:
-    """Get database connection, creating tables if needed."""
-    REGISTRY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(REGISTRY_DB_PATH), timeout=10)
-    conn.row_factory = sqlite3.Row
-
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS tool_registry (
-            name TEXT PRIMARY KEY,
-            description TEXT,
-            category TEXT DEFAULT 'general',
-            enabled BOOLEAN DEFAULT 1,
-            source TEXT DEFAULT 'code',
-            schema_json TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            disabled_reason TEXT,
-            usage_count INTEGER DEFAULT 0,
-            success_count INTEGER DEFAULT 0,
-            avg_latency_ms REAL DEFAULT 0
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_tool_enabled ON tool_registry(enabled);
-        CREATE INDEX IF NOT EXISTS idx_tool_category ON tool_registry(category);
-
-        CREATE TABLE IF NOT EXISTS tool_overrides (
-            tool_name TEXT PRIMARY KEY,
-            override_type TEXT NOT NULL,
-            override_value TEXT NOT NULL,
-            reason TEXT,
-            created_at TEXT NOT NULL,
-            created_by TEXT DEFAULT 'system'
-        );
-    """)
-    conn.commit()
-    return conn
+def _get_conn():
+    """
+    DEPRECATED: SQLite connection is no longer used.
+    Kept for backward compatibility with any code that checks for this function.
+    """
+    raise DeprecationWarning(
+        "SQLite tool_registry is deprecated. Use tool_autonomy service instead."
+    )
 
 
 def sync_tools_from_code(tool_definitions: List[Dict]) -> Dict[str, Any]:
     """
     Sync tool definitions from code to database.
-    Called at startup to ensure DB has all tools.
+    Now delegates to PostgreSQL via tool_autonomy service.
     """
-    with _db_lock:
-        try:
-            conn = _get_conn()
-            now = datetime.utcnow().isoformat()
+    try:
+        service = _get_autonomy_service()
+        result = service.sync_tools_from_code(tool_definitions)
 
-            synced = 0
-            new_tools = 0
+        # Convert response format for backward compatibility
+        if result.get("status") == "synced":
+            return {"synced": result.get("count", 0), "new_tools": 0}
+        elif result.get("status") == "error":
+            return {"error": result.get("error")}
+        return result
 
-            for tool in tool_definitions:
-                name = tool.get("name")
-                if not name:
-                    continue
+    except Exception as e:
+        log_with_context(logger, "error", "Tool registry sync failed", error=str(e))
+        return {"error": str(e)}
 
-                # Check if tool exists
-                cursor = conn.execute(
-                    "SELECT name, enabled FROM tool_registry WHERE name = ?",
-                    (name,)
+
+def is_tool_enabled(tool_name: str) -> bool:
+    """Check if a tool is enabled."""
+    try:
+        from ..postgres_state import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT enabled FROM jarvis_tools WHERE name = %s",
+                    (tool_name,)
                 )
-                existing = cursor.fetchone()
+                row = cur.fetchone()
+                if row is None:
+                    return True  # Unknown tools enabled by default
+                return bool(row[0] if isinstance(row, tuple) else row.get("enabled", True))
+    except Exception:
+        return True  # Default to enabled on error
 
-                if existing:
-                    # Update description but keep enabled status
-                    conn.execute("""
-                        UPDATE tool_registry
-                        SET description = ?, schema_json = ?, updated_at = ?
-                        WHERE name = ?
-                    """, (
-                        tool.get("description", "")[:500],
-                        json.dumps(tool.get("input_schema", {})),
-                        now,
-                        name
-                    ))
-                    synced += 1
-                else:
-                    # New tool
-                    conn.execute("""
-                        INSERT INTO tool_registry
-                        (name, description, category, enabled, source, schema_json, created_at, updated_at)
-                        VALUES (?, ?, ?, 1, 'code', ?, ?, ?)
-                    """, (
-                        name,
-                        tool.get("description", "")[:500],
-                        _categorize_tool(name),
-                        json.dumps(tool.get("input_schema", {})),
-                        now, now
-                    ))
-                    new_tools += 1
 
-            conn.commit()
-            conn.close()
+def set_tool_enabled(tool_name: str, enabled: bool, reason: str = None) -> bool:
+    """Enable or disable a tool."""
+    try:
+        service = _get_autonomy_service()
+        result = service.set_tool_enabled(tool_name, enabled, reason)
+        return result.get("status") == "success"
+    except Exception as e:
+        log_with_context(logger, "error", "Failed to set tool status", error=str(e))
+        return False
 
-            log_with_context(logger, "info", "Tool registry synced",
-                           synced=synced, new_tools=new_tools)
-            return {"synced": synced, "new_tools": new_tools}
-        except Exception as e:
-            log_with_context(logger, "error", "Tool registry sync failed", error=str(e))
-            return {"error": str(e)}
+
+def get_enabled_tools() -> List[str]:
+    """Get list of enabled tool names."""
+    try:
+        from ..postgres_state import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM jarvis_tools WHERE enabled = true")
+                rows = cur.fetchall()
+                return [row[0] if isinstance(row, tuple) else row["name"] for row in rows]
+    except Exception as e:
+        log_with_context(logger, "warning", "Failed to get enabled tools", error=str(e))
+        return []
+
+
+def get_disabled_tools() -> List[Dict[str, Any]]:
+    """Get list of disabled tools with reasons."""
+    try:
+        from ..postgres_state import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT name, updated_at
+                    FROM jarvis_tools
+                    WHERE enabled = false
+                """)
+                rows = cur.fetchall()
+                return [
+                    {
+                        "name": row[0] if isinstance(row, tuple) else row["name"],
+                        "disabled_reason": None,  # Not tracked in new schema
+                        "updated_at": (row[1] if isinstance(row, tuple) else row["updated_at"]).isoformat() if row else None
+                    }
+                    for row in rows
+                ]
+    except Exception as e:
+        log_with_context(logger, "warning", "Failed to get disabled tools", error=str(e))
+        return []
+
+
+def record_tool_usage(tool_name: str, success: bool, latency_ms: float = None) -> None:
+    """Record tool usage for statistics."""
+    try:
+        service = _get_autonomy_service()
+        service.record_tool_execution(
+            tool_name=tool_name,
+            success=success,
+            latency_ms=int(latency_ms) if latency_ms else 0
+        )
+    except Exception as e:
+        log_with_context(logger, "debug", "Failed to record tool usage", error=str(e))
+
+
+def get_tool_stats(category: str = None, min_usage: int = 0) -> List[Dict[str, Any]]:
+    """Get tool usage statistics."""
+    try:
+        from ..postgres_state import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                sql = """
+                    SELECT name, category, enabled, use_count,
+                           COALESCE(success_rate * 100, 0) as success_rate,
+                           COALESCE(avg_latency_ms, 0) as avg_latency_ms
+                    FROM jarvis_tools
+                    WHERE use_count >= %s
+                """
+                params = [min_usage]
+
+                if category:
+                    sql += " AND category = %s"
+                    params.append(category)
+
+                sql += " ORDER BY use_count DESC"
+
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+
+                return [
+                    {
+                        "name": row[0] if isinstance(row, tuple) else row["name"],
+                        "category": row[1] if isinstance(row, tuple) else row["category"],
+                        "enabled": row[2] if isinstance(row, tuple) else row["enabled"],
+                        "usage_count": row[3] if isinstance(row, tuple) else row["use_count"],
+                        "success_count": 0,  # Not tracked separately
+                        "success_rate": float(row[4] if isinstance(row, tuple) else row["success_rate"]),
+                        "avg_latency_ms": float(row[5] if isinstance(row, tuple) else row["avg_latency_ms"])
+                    }
+                    for row in rows
+                ]
+    except Exception as e:
+        log_with_context(logger, "warning", "Failed to get tool stats", error=str(e))
+        return []
+
+
+def get_unused_tools(days: int = 7) -> List[str]:
+    """Get tools that haven't been used recently."""
+    try:
+        from ..postgres_state import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT name FROM jarvis_tools
+                    WHERE use_count = 0
+                       OR last_used_at IS NULL
+                       OR last_used_at < NOW() - INTERVAL '%s days'
+                    ORDER BY use_count ASC
+                    LIMIT 20
+                """, (days,))
+                rows = cur.fetchall()
+                return [row[0] if isinstance(row, tuple) else row["name"] for row in rows]
+    except Exception as e:
+        log_with_context(logger, "warning", "Failed to get unused tools", error=str(e))
+        return []
+
+
+def get_registry_summary() -> Dict[str, Any]:
+    """Get summary of tool registry."""
+    try:
+        from ..postgres_state import get_conn
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                # Total tools
+                cur.execute("SELECT COUNT(*) FROM jarvis_tools")
+                total = cur.fetchone()[0]
+
+                # Enabled/disabled
+                cur.execute("SELECT COUNT(*) FROM jarvis_tools WHERE enabled = true")
+                enabled = cur.fetchone()[0]
+
+                # By category
+                cur.execute("""
+                    SELECT category, COUNT(*) as cnt
+                    FROM jarvis_tools
+                    GROUP BY category
+                    ORDER BY cnt DESC
+                """)
+                by_category = {
+                    row[0] if isinstance(row, tuple) else row["category"]:
+                    row[1] if isinstance(row, tuple) else row["cnt"]
+                    for row in cur.fetchall()
+                }
+
+                # Most used
+                cur.execute("""
+                    SELECT name, use_count
+                    FROM jarvis_tools
+                    ORDER BY use_count DESC
+                    LIMIT 5
+                """)
+                most_used = [
+                    {
+                        "name": row[0] if isinstance(row, tuple) else row["name"],
+                        "count": row[1] if isinstance(row, tuple) else row["use_count"]
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                # By risk tier
+                cur.execute("""
+                    SELECT risk_tier, COUNT(*) as cnt
+                    FROM jarvis_tools
+                    GROUP BY risk_tier
+                    ORDER BY risk_tier
+                """)
+                by_risk_tier = {
+                    f"tier_{row[0] if isinstance(row, tuple) else row['risk_tier']}":
+                    row[1] if isinstance(row, tuple) else row["cnt"]
+                    for row in cur.fetchall()
+                }
+
+                return {
+                    "total_tools": total,
+                    "enabled": enabled,
+                    "disabled": total - enabled,
+                    "by_category": by_category,
+                    "by_risk_tier": by_risk_tier,
+                    "most_used": most_used,
+                    "source": "postgresql"  # Indicate new source
+                }
+    except Exception as e:
+        log_with_context(logger, "warning", "Failed to get registry summary", error=str(e))
+        return {"error": str(e)}
 
 
 def _categorize_tool(name: str) -> str:
-    """Auto-categorize tool based on name."""
+    """
+    Auto-categorize tool based on name.
+    DEPRECATED: Categories are now managed in the database.
+    """
     categories = {
         "memory": ["remember", "recall", "fact", "knowledge"],
         "calendar": ["calendar", "event"],
@@ -156,202 +306,3 @@ def _categorize_tool(name: str) -> str:
         if any(kw in name_lower for kw in keywords):
             return category
     return "general"
-
-
-def is_tool_enabled(tool_name: str) -> bool:
-    """Check if a tool is enabled."""
-    try:
-        conn = _get_conn()
-        cursor = conn.execute(
-            "SELECT enabled FROM tool_registry WHERE name = ?",
-            (tool_name,)
-        )
-        row = cursor.fetchone()
-        conn.close()
-
-        if row is None:
-            return True  # Unknown tools are enabled by default
-        return bool(row["enabled"])
-    except Exception:
-        return True  # Default to enabled on error
-
-
-def set_tool_enabled(tool_name: str, enabled: bool, reason: str = None) -> bool:
-    """Enable or disable a tool."""
-    with _db_lock:
-        try:
-            conn = _get_conn()
-            now = datetime.utcnow().isoformat()
-
-            conn.execute("""
-                UPDATE tool_registry
-                SET enabled = ?, disabled_reason = ?, updated_at = ?
-                WHERE name = ?
-            """, (enabled, reason if not enabled else None, now, tool_name))
-
-            conn.commit()
-            affected = conn.total_changes
-            conn.close()
-
-            log_with_context(logger, "info", "Tool status changed",
-                           tool=tool_name, enabled=enabled, reason=reason)
-            return affected > 0
-        except Exception as e:
-            log_with_context(logger, "error", "Failed to set tool status", error=str(e))
-            return False
-
-
-def get_enabled_tools() -> List[str]:
-    """Get list of enabled tool names."""
-    try:
-        conn = _get_conn()
-        cursor = conn.execute(
-            "SELECT name FROM tool_registry WHERE enabled = 1"
-        )
-        tools = [row["name"] for row in cursor.fetchall()]
-        conn.close()
-        return tools
-    except Exception as e:
-        log_with_context(logger, "warning", "Failed to get enabled tools", error=str(e))
-        return []
-
-
-def get_disabled_tools() -> List[Dict[str, Any]]:
-    """Get list of disabled tools with reasons."""
-    try:
-        conn = _get_conn()
-        cursor = conn.execute("""
-            SELECT name, disabled_reason, updated_at
-            FROM tool_registry
-            WHERE enabled = 0
-        """)
-        tools = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        return tools
-    except Exception as e:
-        log_with_context(logger, "warning", "Failed to get disabled tools", error=str(e))
-        return []
-
-
-def record_tool_usage(tool_name: str, success: bool, latency_ms: float = None) -> None:
-    """Record tool usage for statistics."""
-    with _db_lock:
-        try:
-            conn = _get_conn()
-
-            # Update aggregated stats
-            if success:
-                conn.execute("""
-                    UPDATE tool_registry
-                    SET usage_count = usage_count + 1,
-                        success_count = success_count + 1,
-                        avg_latency_ms = CASE
-                            WHEN usage_count = 0 THEN ?
-                            ELSE (avg_latency_ms * usage_count + ?) / (usage_count + 1)
-                        END
-                    WHERE name = ?
-                """, (latency_ms or 0, latency_ms or 0, tool_name))
-            else:
-                conn.execute("""
-                    UPDATE tool_registry
-                    SET usage_count = usage_count + 1
-                    WHERE name = ?
-                """, (tool_name,))
-
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            log_with_context(logger, "debug", "Failed to record tool usage", error=str(e))
-
-
-def get_tool_stats(category: str = None, min_usage: int = 0) -> List[Dict[str, Any]]:
-    """Get tool usage statistics."""
-    try:
-        conn = _get_conn()
-
-        sql = """
-            SELECT name, category, enabled, usage_count, success_count,
-                   CASE WHEN usage_count > 0 THEN ROUND(success_count * 100.0 / usage_count, 1) ELSE 0 END as success_rate,
-                   ROUND(avg_latency_ms, 1) as avg_latency_ms
-            FROM tool_registry
-            WHERE usage_count >= ?
-        """
-        params = [min_usage]
-
-        if category:
-            sql += " AND category = ?"
-            params.append(category)
-
-        sql += " ORDER BY usage_count DESC"
-
-        cursor = conn.execute(sql, params)
-        stats = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        return stats
-    except Exception as e:
-        log_with_context(logger, "warning", "Failed to get tool stats", error=str(e))
-        return []
-
-
-def get_unused_tools(days: int = 7) -> List[str]:
-    """Get tools that haven't been used recently."""
-    try:
-        conn = _get_conn()
-        cursor = conn.execute("""
-            SELECT name FROM tool_registry
-            WHERE usage_count = 0
-            OR updated_at < datetime('now', ?)
-            ORDER BY usage_count ASC
-            LIMIT 20
-        """, (f"-{days} days",))
-        tools = [row["name"] for row in cursor.fetchall()]
-        conn.close()
-        return tools
-    except Exception as e:
-        log_with_context(logger, "warning", "Failed to get unused tools", error=str(e))
-        return []
-
-
-def get_registry_summary() -> Dict[str, Any]:
-    """Get summary of tool registry."""
-    try:
-        conn = _get_conn()
-
-        # Total tools
-        cursor = conn.execute("SELECT COUNT(*) as total FROM tool_registry")
-        total = cursor.fetchone()["total"]
-
-        # Enabled/disabled
-        cursor = conn.execute("SELECT COUNT(*) as cnt FROM tool_registry WHERE enabled = 1")
-        enabled = cursor.fetchone()["cnt"]
-
-        # By category
-        cursor = conn.execute("""
-            SELECT category, COUNT(*) as cnt
-            FROM tool_registry
-            GROUP BY category
-            ORDER BY cnt DESC
-        """)
-        by_category = {row["category"]: row["cnt"] for row in cursor.fetchall()}
-
-        # Most used
-        cursor = conn.execute("""
-            SELECT name, usage_count
-            FROM tool_registry
-            ORDER BY usage_count DESC
-            LIMIT 5
-        """)
-        most_used = [{"name": row["name"], "count": row["usage_count"]} for row in cursor.fetchall()]
-
-        conn.close()
-
-        return {
-            "total_tools": total,
-            "enabled": enabled,
-            "disabled": total - enabled,
-            "by_category": by_category,
-            "most_used": most_used
-        }
-    except Exception as e:
-        log_with_context(logger, "warning", "Failed to get registry summary", error=str(e))
-        return {"error": str(e)}

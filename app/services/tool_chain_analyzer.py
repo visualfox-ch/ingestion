@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from collections import defaultdict
 
+from psycopg2.extras import RealDictCursor
+
 from app.postgres_state import get_conn
 from app.observability import get_logger
 
@@ -56,7 +58,7 @@ class ToolChainAnalyzer:
 
         # Save to database
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     INSERT INTO jarvis_tool_chains
                     (session_id, user_id, tool_sequence, query_context, chain_success, total_duration_ms)
@@ -80,7 +82,7 @@ class ToolChainAnalyzer:
         pattern_hash = hashlib.sha256(json.dumps(tool_sequence).encode()).hexdigest()[:16]
 
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, occurrence_count, avg_success_rate, avg_duration_ms
                     FROM jarvis_tool_chain_patterns
@@ -111,7 +113,7 @@ class ToolChainAnalyzer:
     def get_popular_chains(self, min_occurrences: int = 3, limit: int = 10) -> List[Dict[str, Any]]:
         """Get the most popular tool chains."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT pattern, occurrence_count, avg_success_rate, avg_duration_ms, last_seen_at
                     FROM jarvis_tool_chain_patterns
@@ -138,7 +140,7 @@ class ToolChainAnalyzer:
             return {"suggestion": None, "reason": "no_current_tools"}
 
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Find patterns that start with current sequence
                 cur.execute("""
                     SELECT pattern, occurrence_count, avg_success_rate
@@ -191,7 +193,7 @@ class ToolChainAnalyzer:
     def get_chain_stats(self, user_id: str = None, days: int = 30) -> Dict[str, Any]:
         """Get statistics about tool chains."""
         with get_conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 where_clause = f"WHERE created_at > NOW() - INTERVAL '{days} days'"
                 params = []
 

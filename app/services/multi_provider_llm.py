@@ -1,7 +1,7 @@
 """
 Multi-Provider LLM Client.
 
-Supports calling both OpenAI and Anthropic models with a unified interface.
+Supports OpenAI, Anthropic, and Ollama models with a unified interface.
 
 O2 Migration: OpenAI uses Responses API for server-side caching.
 """
@@ -13,12 +13,15 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 
+from .ollama_client import OllamaClient
+
 logger = logging.getLogger(__name__)
 
 
 class Provider(Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    OLLAMA = "ollama"
 
 
 @dataclass
@@ -37,12 +40,13 @@ class LLMResponse:
 
 class MultiProviderLLM:
     """
-    Unified interface for calling OpenAI and Anthropic models.
+    Unified interface for calling OpenAI, Anthropic, and Ollama models.
     """
 
     def __init__(self):
         self._openai_client = None
         self._anthropic_client = None
+        self._ollama_client = None
 
     def _get_openai_client(self):
         """Lazy initialization of OpenAI client."""
@@ -70,6 +74,12 @@ class MultiProviderLLM:
                 raise ImportError("anthropic package not installed. Run: pip install anthropic")
         return self._anthropic_client
 
+    def _get_ollama_client(self) -> OllamaClient:
+        """Lazy initialization of Ollama client."""
+        if self._ollama_client is None:
+            self._ollama_client = OllamaClient()
+        return self._ollama_client
+
     def chat(
         self,
         model: str,
@@ -86,7 +96,7 @@ class MultiProviderLLM:
 
         Args:
             model: Model ID (e.g., 'gpt-4o-mini', 'claude-sonnet-4-20250514')
-            provider: Provider enum (OPENAI or ANTHROPIC)
+            provider: Provider enum (OPENAI, ANTHROPIC, or OLLAMA)
             messages: List of message dicts with 'role' and 'content'
             system: System prompt (optional)
             max_tokens: Maximum output tokens
@@ -106,6 +116,8 @@ class MultiProviderLLM:
             )
         elif provider == Provider.ANTHROPIC:
             response = self._call_anthropic(model, messages, system, max_tokens, temperature, tools)
+        elif provider == Provider.OLLAMA:
+            response = self._call_ollama(model, messages, system, max_tokens, temperature)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -189,6 +201,7 @@ class MultiProviderLLM:
 
         # Extract content from Responses API format
         content = ""
+        saw_function_call = False
 
         # Handle output_text (simple text response)
         if hasattr(response, 'output_text') and response.output_text:
@@ -207,6 +220,7 @@ class MultiProviderLLM:
                                         break
                     elif item.type == "function_call":
                         import json
+                        saw_function_call = True
                         content = {
                             "tool_calls": [{
                                 "id": item.call_id if hasattr(item, 'call_id') else item.id,
@@ -229,7 +243,7 @@ class MultiProviderLLM:
             "completed": "stop",
             "incomplete": "length",
         }
-        stop_reason = stop_reason_map.get(status, status)
+        stop_reason = "tool_use" if saw_function_call else stop_reason_map.get(status, status)
 
         return LLMResponse(
             content=content,
@@ -326,6 +340,39 @@ class MultiProviderLLM:
             latency_ms=0,  # Will be set by caller
             stop_reason=response.stop_reason,
             raw_response=response,
+        )
+
+    def _call_ollama(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        system: Optional[str],
+        max_tokens: int,
+        temperature: float,
+    ) -> LLMResponse:
+        """Call local/remote Ollama using OpenAI-compatible API."""
+        client = self._get_ollama_client()
+        result = client.chat(
+            model=model,
+            messages=messages,
+            system=system,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        if not result.success:
+            raise RuntimeError(result.error or "Ollama request failed")
+
+        return LLMResponse(
+            content=result.content,
+            model=result.model,
+            provider="ollama",
+            input_tokens=result.prompt_tokens,
+            output_tokens=result.completion_tokens,
+            latency_ms=int(result.duration_ms),
+            stop_reason=result.stop_reason,
+            raw_response=result.raw_response,
+            response_id=result.response_id,
         )
 
 

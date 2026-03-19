@@ -152,12 +152,12 @@ echo "C1. Get domain configuration"
 curl -s "$BASE_URL/domain/config" | jq .
 echo ""
 
-# C2. Get allowed collections for namespace
+# C2. Get allowed collections for scope (legacy namespace query param)
 echo "C2. Get allowed collections for work_projektil"
 curl -s "$BASE_URL/domain/allowed?namespace=work_projektil&include_shared=true" | jq .
 echo ""
 
-# C3. Check cross-namespace access
+# C3. Check cross-scope access (legacy namespace identifiers)
 echo "C3. Check if private can access work_projektil"
 curl -s "$BASE_URL/domain/check?source_namespace=private&target_namespace=work_projektil&operation=read" | jq .
 echo ""
@@ -296,7 +296,8 @@ echo "  - Advice Auto: /advice_auto (persona selection + drafts)"
 echo "  - Decide & Message: /decide_and_message (decision log + stakeholder drafts)"
 echo ""
 echo "Remember:"
-echo "  - Private namespace blocks LLM by default (ALLOW_LLM_PRIVATE=false)"
-echo "  - Cross-namespace access blocked by default (ALLOW_CROSS_NAMESPACE=false)"
+echo "  - Private scope blocks LLM by default (ALLOW_LLM_PRIVATE=false)"
+echo "  - Cross-scope access blocked by default (ALLOW_CROSS_NAMESPACE=false)"
+echo "  - Domain endpoints currently use legacy namespace identifiers"
 echo "  - Relevance decays with 30-day half-life"
 echo "  - Items below 0.2 relevance are archive candidates"

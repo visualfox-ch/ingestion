@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 class Provider(Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    OLLAMA = "ollama"
 
 
 @dataclass

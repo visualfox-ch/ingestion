@@ -275,7 +275,7 @@ class ReflectionService:
                 """, (session_id, query_hash, query_summary, quality_score, json.dumps(critique_scores)))
 
                 result = cur.fetchone()
-                return result[0] if result else None
+                return result["id"] if result else None
 
         except Exception as e:
             self.logger.warning(f"Failed to log evaluation: {e}")
@@ -489,12 +489,12 @@ class ReflectionService:
             learnings = []
             for p in patterns:
                 learnings.append({
-                    "type": p[0],
-                    "pattern": p[1],
-                    "action": p[2],
-                    "occurrences": p[3],
-                    "avg_outcome": round(p[4], 2) if p[4] else None,
-                    "status": "recurring" if p[3] >= 5 else "emerging"
+                    "type": p["improvement_type"],
+                    "pattern": p["description"],
+                    "action": p["action_required"],
+                    "occurrences": p["occurrences"],
+                    "avg_outcome": round(p["avg_outcome"], 2) if p["avg_outcome"] else None,
+                    "status": "recurring" if p["occurrences"] >= 5 else "emerging"
                 })
 
             # Categorize learnings
@@ -545,7 +545,7 @@ class ReflectionService:
                 """, (days,))
 
                 daily_quality = [
-                    {"date": str(r[0]), "avg_quality": round(r[1], 3), "evaluations": r[2]}
+                    {"date": str(r["day"]), "avg_quality": round(r["avg_quality"], 3), "evaluations": r["evaluations"]}
                     for r in cur.fetchall()
                 ]
 
@@ -573,7 +573,7 @@ class ReflectionService:
                 """, (days,))
 
                 by_category = [
-                    {"type": r[0], "count": r[1], "avg_outcome": round(r[2], 2) if r[2] else None}
+                    {"type": r["improvement_type"], "count": r["count"], "avg_outcome": round(r["avg"]) if r["avg"] else None}
                     for r in cur.fetchall()
                 ]
 
@@ -596,13 +596,13 @@ class ReflectionService:
                 "trend": trend,
                 "trend_delta": trend_delta,
                 "improvements": {
-                    "applied": improvement_stats[0] if improvement_stats else 0,
-                    "dismissed": improvement_stats[1] if improvement_stats else 0,
-                    "pending": improvement_stats[2] if improvement_stats else 0,
-                    "total": improvement_stats[3] if improvement_stats else 0,
+                    "applied": improvement_stats["applied"] if improvement_stats else 0,
+                    "dismissed": improvement_stats["dismissed"] if improvement_stats else 0,
+                    "pending": improvement_stats["pending"] if improvement_stats else 0,
+                    "total": improvement_stats["total"] if improvement_stats else 0,
                     "application_rate": round(
-                        improvement_stats[0] / improvement_stats[3], 2
-                    ) if improvement_stats and improvement_stats[3] > 0 else 0
+                        improvement_stats["applied"] / improvement_stats["total"], 2
+                    ) if improvement_stats and improvement_stats["total"] > 0 else 0
                 },
                 "by_category": by_category
             }
@@ -639,8 +639,8 @@ class ReflectionService:
                 return {
                     "success": True,
                     "improvement_id": improvement_id,
-                    "type": result[0],
-                    "description": result[1],
+                    "type": result["improvement_type"],
+                    "description": result["description"],
                     "outcome_score": outcome_score
                 }
             else:
@@ -681,13 +681,13 @@ class ReflectionService:
 
             improvements = [
                 {
-                    "id": r[0],
-                    "type": r[1],
-                    "description": r[2],
-                    "action": r[3],
-                    "priority": r[4],
-                    "created_at": r[5].isoformat() if r[5] else None,
-                    "query_context": r[6][:100] if r[6] else None
+                    "id": r["id"],
+                    "type": r["improvement_type"],
+                    "description": r["description"],
+                    "action": r["action_required"],
+                    "priority": r["priority"],
+                    "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                    "query_context": r["query_summary"][:100] if r["query_summary"] else None
                 }
                 for r in rows
             ]
@@ -841,9 +841,9 @@ class ReflectionService:
             with get_dict_cursor() as cur:
                 cur.execute(query, params)
                 rows = cur.fetchall()
-                columns = [desc[0] for desc in cur.description]
 
-            rules = [dict(zip(columns, row)) for row in rows]
+            # RealDictCursor already returns dict-like rows
+            rules = [dict(row) for row in rows]
 
             return {
                 "success": True,

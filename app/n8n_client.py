@@ -4,11 +4,9 @@ n8n API Client - Gateway to Google APIs via n8n webhooks.
 n8n handles OAuth authentication for Google services.
 This client provides a clean interface for Jarvis to interact with Google APIs.
 
-Architecture (Unified API Gateway):
-- GET  /webhook/google?service=calendar&account=...  → Read calendar events
-- POST /webhook/google?service=calendar&account=...  → Create calendar event
-- GET  /webhook/google?service=gmail                 → Read emails (Projektil only)
-- POST /webhook/google?service=gmail                 → Send email (Projektil only)
+Architecture (Current n8n Gateway):
+- POST /webhook/google-calendar  (action=list|create, account=...)
+- POST /webhook/google-gmail     (action=list|send)
 
 Accounts:
 - projektil: Calendar + Gmail
@@ -17,11 +15,18 @@ Accounts:
 import os
 import time
 import asyncio
+import json
+import subprocess
 import requests
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 
 from .observability import get_logger, log_with_context
+from .metrics import (
+    CALENDAR_PROVIDER_REQUESTS_TOTAL,
+    CALENDAR_PROVIDER_LATENCY_SECONDS,
+    CALENDAR_PROVIDER_FALLBACK_TOTAL,
+)
 
 logger = get_logger("jarvis.n8n")
 
@@ -48,6 +53,145 @@ N8N_TIMEOUT = int(os.environ.get("N8N_TIMEOUT", "30"))
 
 # Mock mode for stresstest (disable external API calls)
 MOCK_N8N = os.environ.get("MOCK_N8N", "false").lower() == "true"
+
+
+class CalendarProviderError(Exception):
+    """Structured provider error used for fallback decisions."""
+
+    def __init__(self, provider: str, error_type: str, message: str):
+        super().__init__(message)
+        self.provider = provider
+        self.error_type = error_type
+        self.message = message
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int, min_value: int, max_value: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        log_with_context(
+            logger,
+            "warning",
+            "Invalid integer env value, using default",
+            env=name,
+            raw_value=str(raw),
+            default=default,
+        )
+        return default
+
+    if value < min_value or value > max_value:
+        log_with_context(
+            logger,
+            "warning",
+            "Out-of-range integer env value, using default",
+            env=name,
+            raw_value=str(raw),
+            min_value=min_value,
+            max_value=max_value,
+            default=default,
+        )
+        return default
+
+    return value
+
+
+def _calendar_provider_settings() -> Dict[str, Any]:
+    """Read provider routing settings from env so behavior can be adjusted without code changes."""
+    primary_raw = os.environ.get("JARVIS_CALENDAR_PROVIDER_PRIMARY", "n8n").strip().lower()
+    fallback_raw = os.environ.get("JARVIS_CALENDAR_PROVIDER_FALLBACK", "cli").strip().lower()
+    allowed_providers = ("n8n", "cli")
+
+    primary = primary_raw
+    if primary_raw not in allowed_providers:
+        log_with_context(
+            logger,
+            "warning",
+            "Invalid calendar primary provider, using default",
+            primary=primary_raw,
+            default="n8n",
+        )
+        primary = "n8n"
+
+    fallback = fallback_raw
+    if fallback_raw not in allowed_providers:
+        log_with_context(
+            logger,
+            "warning",
+            "Invalid calendar fallback provider, using default",
+            fallback=fallback_raw,
+            default="cli",
+        )
+        fallback = "cli"
+
+    return {
+        "primary": primary,
+        "fallback": fallback,
+        "fallback_enabled": _env_bool("JARVIS_CALENDAR_PROVIDER_FALLBACK_ENABLED", False),
+        "failfast": _env_bool("JARVIS_CALENDAR_PROVIDER_FAILFAST", False),
+        "cli_command": os.environ.get(
+            "JARVIS_GOOGLE_WORKSPACE_CLI_COMMAND",
+            "/brain/system/tools/googleworkspace-cli/releases/v0.17.0/gws-x86_64-unknown-linux-gnu/gws",
+        ),
+        "cli_config_dir": os.environ.get("JARVIS_GOOGLE_WORKSPACE_CLI_CONFIG_DIR", "/brain/system/state/googleworkspace-cli/xdg/gws"),
+        "cli_xdg_config_home": os.environ.get("JARVIS_GOOGLE_WORKSPACE_CLI_XDG_CONFIG_HOME", "/brain/system/state/googleworkspace-cli/xdg"),
+        "cli_timeout_seconds": _env_int("JARVIS_GOOGLE_WORKSPACE_CLI_TIMEOUT_SECONDS", 20, 1, 300),
+        "calendar_id_projektil": os.environ.get("JARVIS_CALENDAR_ID_PROJEKTIL", "primary"),
+        "calendar_id_visualfox": os.environ.get("JARVIS_CALENDAR_ID_VISUALFOX", "primary"),
+    }
+
+
+def _classify_provider_error(error_text: str) -> str:
+    text = (error_text or "").lower()
+    if "timeout" in text:
+        return "timeout"
+    if "429" in text or "quota" in text or "rate" in text:
+        return "rate_limited"
+    if (
+        "401" in text
+        or "403" in text
+        or "unauth" in text
+        or "forbidden" in text
+        or "authorization grant" in text
+        or "refresh token" in text
+        or "revoked" in text
+        or "expired" in text
+    ):
+        return "auth"
+    if "validation" in text or "invalid" in text:
+        return "validation"
+    return "unknown"
+
+
+def _record_provider_metrics(provider: str, account: str, result: str, latency_seconds: float) -> None:
+    try:
+        CALENDAR_PROVIDER_REQUESTS_TOTAL.labels(provider=provider, account=account, result=result).inc()
+        CALENDAR_PROVIDER_LATENCY_SECONDS.labels(provider=provider, account=account).observe(max(latency_seconds, 0.0))
+    except Exception:
+        # Metrics must never break request execution.
+        pass
+
+
+def _record_fallback_metric(from_provider: str, to_provider: str, reason: str, account: str) -> None:
+    try:
+        CALENDAR_PROVIDER_FALLBACK_TOTAL.labels(
+            from_provider=from_provider,
+            to_provider=to_provider,
+            reason=reason,
+            account=account,
+        ).inc()
+    except Exception:
+        pass
 
 
 # ============ Mock Responses ============
@@ -113,25 +257,66 @@ def _call_google_api(
             return {"success": True, "message": f"Mock {service} response"}
     
     # Real n8n API call
-    url = f"{N8N_BASE_URL}/google"
+    request_method = method.upper()
+    query_params: Dict[str, Any] = {}
+    request_body: Dict[str, Any] = dict(body) if body else {}
 
-    query_params = {
-        "service": service,
-        "account": account,
-    }
-    if params:
-        query_params.update(params)
+    # Live n8n gateways are service-specific POST webhooks.
+    if service == "calendar":
+        url = f"{N8N_BASE_URL}/google-calendar"
+        request_method = "POST"
+        request_body.setdefault("action", "create" if method.upper() == "POST" else "list")
+        request_body.setdefault("account", account)
+        if params:
+            request_body.update(params)
+    elif service == "gmail":
+        url = f"{N8N_BASE_URL}/google-gmail"
+        request_method = "POST"
+        request_body.setdefault("action", "send" if method.upper() == "POST" else "list")
+        if params:
+            request_body.update(params)
+    else:
+        # Keep legacy generic webhook behavior for other services.
+        url = f"{N8N_BASE_URL}/google"
+        query_params = {
+            "service": service,
+            "account": account,
+        }
+        if params:
+            query_params.update(params)
 
     try:
         log_with_context(logger, "debug", "Calling n8n Google API",
                         service=service, account=account, method=method)
 
-        if method == "GET":
+        if request_method == "GET":
             resp = requests.get(url, params=query_params, timeout=N8N_TIMEOUT)
         else:
-            resp = requests.post(url, params=query_params, json=body, timeout=N8N_TIMEOUT)
+            resp = requests.post(url, params=query_params, json=request_body, timeout=N8N_TIMEOUT)
 
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = ""
+            try:
+                payload = resp.json()
+                if isinstance(payload, dict):
+                    detail = str(payload.get("error") or payload.get("message") or payload)
+                else:
+                    detail = str(payload)
+            except Exception:
+                detail = (resp.text or "").strip()
+
+            error_text = f"http_{resp.status_code}: {detail}" if detail else f"http_{resp.status_code}"
+            log_with_context(
+                logger,
+                "error",
+                "n8n API returned error status",
+                service=service,
+                account=account,
+                status_code=resp.status_code,
+                error=error_text,
+            )
+            return {"success": False, "error": error_text, "status_code": resp.status_code}
+
         result = resp.json()
 
         log_with_context(logger, "info", "n8n API call successful",
@@ -219,6 +404,173 @@ def _extract_data(response: Dict[str, Any]) -> Any:
         if "success" in response and response.get("success"):
             return response.get("data", response)
     return response
+
+
+def _get_calendar_events_n8n_provider(account: str) -> List[Dict[str, Any]]:
+    """Strict n8n provider call that raises structured errors for fallback routing."""
+    result = _call_google_api("calendar", account)
+    if result.get("success") is False or result.get("error"):
+        message = str(result.get("error") or "n8n calendar provider failed")
+        raise CalendarProviderError("n8n", _classify_provider_error(message), message)
+
+    data = _extract_data(result)
+    if isinstance(data, dict):
+        events = [data] if data.get("id") else []
+    elif isinstance(data, list):
+        events = data
+    else:
+        events = []
+
+    return _normalize_calendar_events(events, account)
+
+
+def _iso_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _get_calendar_events_cli_provider(account: str, timeframe: str) -> List[Dict[str, Any]]:
+    settings = _calendar_provider_settings()
+    calendar_id_map = {
+        "projektil": settings["calendar_id_projektil"],
+        "visualfox": settings["calendar_id_visualfox"],
+    }
+    calendar_id = calendar_id_map.get(account)
+    if not calendar_id:
+        raise CalendarProviderError("cli", "config", f"Missing calendar id mapping for account={account}")
+
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    params: Dict[str, Any] = {
+        "calendarId": calendar_id,
+        "singleEvents": True,
+        "orderBy": "startTime",
+        "maxResults": 100,
+    }
+
+    if timeframe == "today":
+        params["timeMin"] = _iso_utc(today_start)
+        params["timeMax"] = _iso_utc(today_start + timedelta(days=1))
+    elif timeframe == "tomorrow":
+        params["timeMin"] = _iso_utc(today_start + timedelta(days=1))
+        params["timeMax"] = _iso_utc(today_start + timedelta(days=2))
+    elif timeframe == "week":
+        params["timeMin"] = _iso_utc(today_start)
+        params["timeMax"] = _iso_utc(today_start + timedelta(days=7))
+
+    cmd = [
+        settings["cli_command"],
+        "calendar",
+        "events",
+        "list",
+        "--params",
+        json.dumps(params, separators=(",", ":")),
+    ]
+
+    env = os.environ.copy()
+    if settings["cli_config_dir"]:
+        env["GWS_CONFIG_DIR"] = settings["cli_config_dir"]
+    if settings["cli_xdg_config_home"]:
+        env["XDG_CONFIG_HOME"] = settings["cli_xdg_config_home"]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=settings["cli_timeout_seconds"],
+            env=env,
+            shell=False,
+        )
+    except FileNotFoundError as exc:
+        raise CalendarProviderError(
+            "cli",
+            "config",
+            f"CLI command not found: {settings['cli_command']}",
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CalendarProviderError("cli", "timeout", f"CLI timeout: {exc}") from exc
+    except Exception as exc:
+        raise CalendarProviderError("cli", "exec", f"CLI execution failed: {exc}") from exc
+
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip()
+        raise CalendarProviderError("cli", _classify_provider_error(stderr), stderr or "CLI command failed")
+
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise CalendarProviderError("cli", "parse", f"CLI returned invalid JSON: {exc}") from exc
+
+    if isinstance(payload, dict):
+        events = payload.get("items", [])
+    elif isinstance(payload, list):
+        events = payload
+    else:
+        events = []
+
+    return _normalize_calendar_events(events, account)
+
+
+def _fetch_events_for_account_with_provider_routing(account: str, timeframe: str) -> List[Dict[str, Any]]:
+    settings = _calendar_provider_settings()
+    primary = settings["primary"]
+    fallback = settings["fallback"]
+    providers = [primary]
+
+    if settings["fallback_enabled"] and fallback != primary:
+        providers.append(fallback)
+
+    last_error: Optional[CalendarProviderError] = None
+
+    for idx, provider in enumerate(providers):
+        start_ts = time.perf_counter()
+        try:
+            if provider == "n8n":
+                events = _get_calendar_events_n8n_provider(account)
+                events = _filter_events_by_timeframe(events, timeframe)
+            elif provider == "cli":
+                events = _get_calendar_events_cli_provider(account, timeframe)
+            else:
+                raise CalendarProviderError(provider, "config", f"Unsupported provider={provider}")
+
+            latency_seconds = time.perf_counter() - start_ts
+            _record_provider_metrics(provider, account, "success", latency_seconds)
+
+            if idx > 0 and last_error is not None:
+                _record_fallback_metric(last_error.provider, provider, last_error.error_type, account)
+                log_with_context(
+                    logger,
+                    "warning",
+                    "Calendar provider fallback succeeded",
+                    account=account,
+                    timeframe=timeframe,
+                    from_provider=last_error.provider,
+                    to_provider=provider,
+                    reason=last_error.error_type,
+                    events=len(events),
+                )
+
+            return events
+        except CalendarProviderError as exc:
+            latency_seconds = time.perf_counter() - start_ts
+            _record_provider_metrics(provider, account, "error", latency_seconds)
+            last_error = exc
+            log_with_context(
+                logger,
+                "warning",
+                "Calendar provider failed",
+                provider=provider,
+                account=account,
+                timeframe=timeframe,
+                error_type=exc.error_type,
+                error=exc.message,
+            )
+            continue
+
+    if last_error is not None and settings["failfast"]:
+        raise last_error
+
+    return []
 
 
 # ============ Calendar Functions ============
@@ -371,15 +723,23 @@ def get_calendar_events(
     Returns:
         Filtered and sorted list of events
     """
+    if account not in ("all", "visualfox", "projektil"):
+        log_with_context(logger, "warning", "Invalid calendar account filter", account=account)
+        return []
+
+    if timeframe not in ("today", "tomorrow", "week", "all"):
+        log_with_context(logger, "warning", "Invalid calendar timeframe filter, defaulting to week", timeframe=timeframe)
+        timeframe = "week"
+
     events = []
 
     if account in ("all", "visualfox"):
-        events.extend(get_calendar_events_visualfox())
+        events.extend(_fetch_events_for_account_with_provider_routing("visualfox", timeframe))
     if account in ("all", "projektil"):
-        events.extend(get_calendar_events_projektil())
+        events.extend(_fetch_events_for_account_with_provider_routing("projektil", timeframe))
 
     events.sort(key=lambda e: e.get("start", ""))
-    filtered = _filter_events_by_timeframe(events, timeframe)
+    filtered = events if timeframe == "all" else _filter_events_by_timeframe(events, timeframe)
 
     log_with_context(logger, "info", "Fetched calendar events",
                     timeframe=timeframe, account=account,
@@ -722,17 +1082,19 @@ def get_n8n_status() -> Dict[str, Any]:
     return {
         "available": available,
         "base_url": N8N_BASE_URL,
-        "architecture": "unified",
-        "endpoint": "/webhook/google",
+        "architecture": "service_specific",
+        "endpoints": {
+            "calendar": "/webhook/google-calendar",
+            "gmail": "/webhook/google-gmail",
+            "legacy": "/webhook/google",
+        },
         "services": {
             "calendar": {
-                "GET": "Read events (query: account)",
-                "POST": "Create event (body: summary, start, end, ...)",
+                "POST": "Read/create events (body: action=list|create, account, ...)",
                 "accounts": ["projektil", "visualfox"]
             },
             "gmail": {
-                "GET": "Read emails (query: limit)",
-                "POST": "Send email (body: to, subject, body, cc, bcc)",
+                "POST": "Read/send emails (body: action=list|send, ...)",
                 "accounts": ["projektil"]  # Visualfox has no Gmail!
             },
             "drive": {

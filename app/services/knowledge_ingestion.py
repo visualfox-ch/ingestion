@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Knowledge Ingestion Service - DB-gesteuerte Version
 
@@ -14,10 +16,10 @@ from dataclasses import dataclass, field
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Distance, VectorParams, PointStruct
+    Distance, VectorParams, PointStruct, PointIdsList
 )
 
-from ..postgres_state import get_cursor
+from ..postgres_state import get_cursor, get_dict_cursor
 from ..embed import embed_texts
 from ..observability import get_logger
 from .knowledge_sources import (
@@ -174,7 +176,7 @@ def upsert_document(
     """
     content_hash = hashlib.sha256(content.encode()).hexdigest()[:32]
 
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute(
             """
             SELECT id, content_hash FROM documents
@@ -217,7 +219,7 @@ def upsert_document(
 
 def delete_document_chunks(document_id: uuid.UUID) -> list[str]:
     """Löscht Chunk-Tracking und gibt Qdrant-Point-IDs zurück."""
-    with get_cursor() as cur:
+    with get_dict_cursor() as cur:
         cur.execute(
             "SELECT qdrant_point_id FROM document_chunks WHERE document_id = %s",
             (str(document_id),)
@@ -255,7 +257,7 @@ def delete_points_by_ids(client: QdrantClient, collection_name: str, point_ids: 
 
     client.delete(
         collection_name=collection_name,
-        points_selector={"points": point_ids}
+        points_selector=PointIdsList(points=point_ids)
     )
 
 

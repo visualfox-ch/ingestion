@@ -28,9 +28,85 @@ class SandboxWorkflowInput(BaseModel):
     auto_promote: bool = False
 
 
+class SandboxSessionCreateInput(BaseModel):
+    """Request body for a runtime sandbox session."""
+    purpose: str = "python_exec"
+
+
+class SandboxRuntimeExecInput(BaseModel):
+    """Request body for runtime python execution."""
+    code: str
+    files: Optional[Dict[str, str]] = None
+
+
+def _raise_runtime_error(exc: Exception) -> None:
+    from ..sandbox import SandboxExecutionError, SandboxNotFoundError, SandboxPolicyError
+
+    if isinstance(exc, SandboxNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, SandboxPolicyError):
+        raise HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, SandboxExecutionError):
+        raise HTTPException(status_code=400, detail=str(exc))
+    raise HTTPException(status_code=500, detail=str(exc))
+
+
 # =============================================================================
 # STATUS & LISTING
 # =============================================================================
+
+@router.get("/runtime/health")
+def get_runtime_sandbox_health():
+    """Get health and operator controls for the runtime sandbox adapter."""
+    from ..sandbox import get_sandbox_service
+
+    return get_sandbox_service().get_health()
+
+
+@router.get("/runtime/sessions")
+def list_runtime_sandbox_sessions():
+    """List active runtime sandbox sessions."""
+    from ..sandbox import get_sandbox_service
+
+    return get_sandbox_service().list_sessions()
+
+
+@router.post("/runtime/sessions")
+def create_runtime_sandbox_session(body: SandboxSessionCreateInput):
+    """Create a new runtime sandbox session."""
+    from ..sandbox import get_sandbox_service
+
+    try:
+        return get_sandbox_service().create_session(purpose=body.purpose)
+    except Exception as exc:
+        _raise_runtime_error(exc)
+
+
+@router.post("/runtime/sessions/{session_id}/python")
+def execute_runtime_sandbox_python(session_id: str, body: SandboxRuntimeExecInput):
+    """Execute Python code inside an existing runtime sandbox session."""
+    from ..sandbox import get_sandbox_service
+
+    try:
+        return get_sandbox_service().execute_python(
+            session_id=session_id,
+            code=body.code,
+            files=body.files,
+        )
+    except Exception as exc:
+        _raise_runtime_error(exc)
+
+
+@router.delete("/runtime/sessions/{session_id}")
+def cleanup_runtime_sandbox_session(session_id: str):
+    """Cleanup a runtime sandbox session and its workspace."""
+    from ..sandbox import get_sandbox_service
+
+    try:
+        return get_sandbox_service().cleanup_session(session_id)
+    except Exception as exc:
+        _raise_runtime_error(exc)
+
 
 @router.get("/status")
 def get_sandbox_status():
