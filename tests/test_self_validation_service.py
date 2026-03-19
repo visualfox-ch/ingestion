@@ -166,6 +166,53 @@ def test_proactivity_score_returns_no_data_without_table(monkeypatch):
     assert result["status"] == "no_data"
 
 
+def test_reality_check_marks_proactive_warn_for_small_samples(monkeypatch):
+    service = SelfValidationService()
+
+    monkeypatch.setattr(service, "_most_recent_context_user_id", lambda: None)
+    monkeypatch.setattr(service, "memory_diagnostics", lambda: {"status": "success"})
+    monkeypatch.setattr(service, "_agency_metrics_snapshot", lambda hours=168: {})
+    monkeypatch.setattr(service, "_pg_table_exists", lambda table_name: False)
+    monkeypatch.setattr(service, "_resolve_action_queue_path", lambda: None)
+
+    monkeypatch.setattr(
+        service,
+        "proactivity_score",
+        lambda user_id=None, hours=168: {
+            "status": "success",
+            "hint_stats": {
+                "shown": 1,
+                "accepted": 0,
+                "explicitly_rejected": 0,
+                "completed_outcomes": 0,
+                "acceptance_rate": None,
+            },
+            "proactivity_score": None,
+            "sample_quality": {
+                "completed_outcomes": 0,
+                "min_completed_outcomes_for_judgement": 3,
+                "is_small_sample": True,
+            },
+        },
+    )
+
+    class _FakeQuantifier:
+        history = []
+
+        def get_calibration_report(self):
+            return {"overall_ece": None}
+
+    import app.uncertainty_quantifier as _uq_mod
+
+    monkeypatch.setattr(_uq_mod, "get_uncertainty_quantifier", lambda: _FakeQuantifier())
+
+    snapshot = service.reality_check_snapshot(hours=168, days=7, user_id=None)
+
+    proactive_metrics = snapshot["dimensions"]["proactive"]["metrics"]
+    assert proactive_metrics["proactivity_acceptance_rate"]["status"] == "warn"
+    assert proactive_metrics["proactivity_score"]["status"] == "warn"
+
+
 # =============================================================================
 # T-RI-06 Tests: agency P95, proactive SQLite, calibration feedback
 # =============================================================================

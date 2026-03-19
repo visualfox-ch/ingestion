@@ -1362,6 +1362,8 @@ class SelfValidationService:
 
     def proactivity_score(self, user_id: Optional[int] = None, hours: int = 168) -> Dict[str, Any]:
         cutoff = datetime.now() - timedelta(hours=hours)
+        feedback_grace_cutoff = datetime.now() - timedelta(hours=24)
+        min_completed_outcomes = 3
 
         try:
             if not self._pg_table_exists("proactive_hints"):
@@ -1370,21 +1372,37 @@ class SelfValidationService:
 
                     stats = get_proactive_stats()
                     totals = stats.get("totals") or {}
-                    acceptance_rate = totals.get("acceptance_rate")
-                    if acceptance_rate is not None:
-                        acceptance_rate = round(float(acceptance_rate) * 100.0, 1)
 
                     accepted = int(totals.get("accepted") or 0)
                     ignored = int(totals.get("ignored") or 0)
-                    rejected = int(totals.get("rejected") or 0)
-                    shown = accepted + ignored + rejected
-                    avg_confidence = None
+                    explicitly_rejected = int(totals.get("rejected") or 0)
+                    pending = int(stats.get("pending_count") or 0)
+                    shown = int(totals.get("interventions") or 0)
+                    completed_outcomes = accepted + explicitly_rejected
 
-                    if shown > 0:
+                    acceptance_rate = (
+                        round((accepted / completed_outcomes) * 100.0, 1)
+                        if completed_outcomes > 0
+                        else None
+                    )
+
+                    if completed_outcomes > 0:
                         confidence = 50.0
-                        score = round(((acceptance_rate or 0.0) * 0.7) + (confidence * 0.3), 1)
+                        score = round((acceptance_rate * 0.7) + (confidence * 0.3), 1)
                     else:
                         score = None
+
+                    if shown == 0:
+                        assessment = "No proactive activity to assess."
+                    elif completed_outcomes == 0:
+                        assessment = "Awaiting feedback; hints were shown but no completed outcomes yet."
+                    elif completed_outcomes < min_completed_outcomes:
+                        assessment = (
+                            f"Early signal only ({completed_outcomes} completed outcomes); "
+                            "collect more feedback before hard conclusions."
+                        )
+                    else:
+                        assessment = self._assess_proactivity(score)
 
                     result_proactive = {
                         "status": "success",
@@ -1392,19 +1410,28 @@ class SelfValidationService:
                         "user_id": user_id,
                         "period_hours": hours,
                         "hint_stats": {
-                            "total_hints": int(totals.get("interventions") or 0),
+                            "total_hints": shown,
                             "shown": shown,
                             "accepted": accepted,
-                            "rejected": rejected,
+                            "explicitly_rejected": explicitly_rejected,
+                            "rejected": explicitly_rejected,
+                            "ignored_or_expired": ignored,
+                            "no_feedback_yet": pending,
+                            "completed_outcomes": completed_outcomes,
                             "acceptance_rate": acceptance_rate,
-                            "avg_confidence": avg_confidence,
+                            "avg_confidence": None,
                         },
                         "type_distribution": {
                             key: int((value or {}).get("interventions") or 0)
                             for key, value in (stats.get("by_type") or {}).items()
                         },
                         "proactivity_score": score,
-                        "assessment": self._assess_proactivity(score),
+                        "assessment": assessment,
+                        "sample_quality": {
+                            "completed_outcomes": completed_outcomes,
+                            "min_completed_outcomes_for_judgement": min_completed_outcomes,
+                            "is_small_sample": shown > 0 and completed_outcomes < min_completed_outcomes,
+                        },
                         "data_source": "proactive_service_memory",
                     }
                     self._save_proactive_snapshot(acceptance_rate, score, user_id)
@@ -1422,8 +1449,7 @@ class SelfValidationService:
             params: List[Any] = [cutoff]
             user_filter = ""
             if user_id is not None:
-                # proactive_hints.user_id is character varying — cast to str to avoid
-                # "operator does not exist: character varying = integer"
+                # proactive_hints.user_id is character varying
                 user_filter = " AND user_id = %s"
                 params.append(str(user_id))
 
@@ -1434,27 +1460,55 @@ class SelfValidationService:
                         COUNT(*) AS total_hints,
                         COUNT(*) FILTER (WHERE was_shown = TRUE) AS shown,
                         COUNT(*) FILTER (WHERE was_accepted = TRUE) AS accepted,
-                        COUNT(*) FILTER (WHERE was_accepted = FALSE) AS rejected,
+                        COUNT(*) FILTER (
+                            WHERE was_accepted = FALSE
+                              AND (
+                                feedback_at IS NOT NULL
+                                OR NULLIF(TRIM(COALESCE(user_feedback, '')), '') IS NOT NULL
+                              )
+                        ) AS explicitly_rejected,
+                        COUNT(*) FILTER (
+                            WHERE was_accepted = FALSE
+                              AND feedback_at IS NULL
+                              AND NULLIF(TRIM(COALESCE(user_feedback, '')), '') IS NULL
+                        ) AS ambiguous_negative,
+                        COUNT(*) FILTER (
+                            WHERE was_shown = TRUE
+                              AND was_accepted IS NULL
+                              AND created_at >= %s
+                        ) AS no_feedback_yet,
+                        COUNT(*) FILTER (
+                            WHERE was_shown = TRUE
+                              AND was_accepted IS NULL
+                              AND created_at < %s
+                        ) AS ignored_or_expired,
                         AVG(confidence) AS avg_confidence
                     FROM proactive_hints
                     WHERE created_at > %s
                     {user_filter}
                     """,
-                    params,
+                    [feedback_grace_cutoff, feedback_grace_cutoff, *params],
                 )
                 row = cur.fetchone()
+
+                completed_outcomes = int(row["accepted"] or 0) + int(row["explicitly_rejected"] or 0)
+                acceptance_rate = (
+                    round((float(row["accepted"] or 0) / float(completed_outcomes)) * 100.0, 1)
+                    if completed_outcomes > 0
+                    else None
+                )
 
                 hint_stats = {
                     "total_hints": int(row["total_hints"] or 0),
                     "shown": int(row["shown"] or 0),
                     "accepted": int(row["accepted"] or 0),
-                    "rejected": int(row["rejected"] or 0),
-                    "acceptance_rate": round(
-                        (float(row["accepted"] or 0) / float(row["shown"] or 1)) * 100.0,
-                        1,
-                    )
-                    if row["shown"]
-                    else None,
+                    "explicitly_rejected": int(row["explicitly_rejected"] or 0),
+                    "rejected": int(row["explicitly_rejected"] or 0),
+                    "ambiguous_negative": int(row["ambiguous_negative"] or 0),
+                    "no_feedback_yet": int(row["no_feedback_yet"] or 0),
+                    "ignored_or_expired": int(row["ignored_or_expired"] or 0),
+                    "completed_outcomes": completed_outcomes,
+                    "acceptance_rate": acceptance_rate,
                     "avg_confidence": round(float(row["avg_confidence"]), 2)
                     if row["avg_confidence"] is not None
                     else None,
@@ -1477,12 +1531,26 @@ class SelfValidationService:
                     for row in cur.fetchall()
                 }
 
-            if hint_stats["total_hints"] > 0:
+            if hint_stats["completed_outcomes"] > 0:
                 acceptance = hint_stats["acceptance_rate"] or 0.0
                 confidence = (hint_stats["avg_confidence"] or 0.5) * 100.0
                 score = round((acceptance * 0.7) + (confidence * 0.3), 1)
             else:
                 score = None
+
+            shown = int(hint_stats.get("shown") or 0)
+            completed_outcomes = int(hint_stats.get("completed_outcomes") or 0)
+            if shown == 0:
+                assessment = "No proactive activity to assess."
+            elif completed_outcomes == 0:
+                assessment = "Awaiting feedback; hints were shown but no completed outcomes yet."
+            elif completed_outcomes < min_completed_outcomes:
+                assessment = (
+                    f"Early signal only ({completed_outcomes} completed outcomes); "
+                    "collect more feedback before hard conclusions."
+                )
+            else:
+                assessment = self._assess_proactivity(score)
 
             self._save_proactive_snapshot(hint_stats.get("acceptance_rate"), score, user_id)
             return {
@@ -1493,7 +1561,12 @@ class SelfValidationService:
                 "hint_stats": hint_stats,
                 "type_distribution": type_distribution,
                 "proactivity_score": score,
-                "assessment": self._assess_proactivity(score),
+                "assessment": assessment,
+                "sample_quality": {
+                    "completed_outcomes": completed_outcomes,
+                    "min_completed_outcomes_for_judgement": min_completed_outcomes,
+                    "is_small_sample": shown > 0 and completed_outcomes < min_completed_outcomes,
+                },
                 "data_source": "proactive_hints",
             }
         except Exception as exc:
@@ -1623,30 +1696,46 @@ class SelfValidationService:
             proactive_score_value: Optional[float] = None
             proactive_acceptance_status = "no_data"
             proactive_score_status = "no_data"
+            proactive_shown = 0
+            proactive_completed_outcomes = 0
+            proactive_is_small_sample = False
             if proactive.get("status") == "success":
                 hint_stats = proactive.get("hint_stats") or {}
                 raw_acceptance = hint_stats.get("acceptance_rate")
                 raw_score = proactive.get("proactivity_score")
                 proactive_acceptance = float(raw_acceptance) if raw_acceptance is not None else None
                 proactive_score_value = float(raw_score) if raw_score is not None else None
+                proactive_shown = int(hint_stats.get("shown") or 0)
 
-                if proactive_acceptance is not None:
-                    if proactive_acceptance >= 35:
-                        proactive_acceptance_status = "pass"
-                    elif proactive_acceptance >= 20:
-                        proactive_acceptance_status = "warn"
-                    else:
-                        proactive_acceptance_status = "fail"
+                sample_quality = proactive.get("sample_quality") or {}
+                proactive_completed_outcomes = int(sample_quality.get("completed_outcomes") or 0)
+                proactive_is_small_sample = bool(sample_quality.get("is_small_sample"))
 
-                if proactive_score_value is not None:
-                    if proactive_score_value >= 55:
-                        proactive_score_status = "pass"
-                    elif proactive_score_value >= 35:
-                        proactive_score_status = "warn"
-                    else:
-                        proactive_score_status = "fail"
+                if proactive_shown == 0:
+                    proactive_acceptance_status = "no_data"
+                    proactive_score_status = "no_data"
+                elif proactive_is_small_sample:
+                    # Avoid hard fail on thin samples; this is a quality warning, not no_data.
+                    proactive_acceptance_status = "warn"
+                    proactive_score_status = "warn"
+                else:
+                    if proactive_acceptance is not None:
+                        if proactive_acceptance >= 35:
+                            proactive_acceptance_status = "pass"
+                        elif proactive_acceptance >= 20:
+                            proactive_acceptance_status = "warn"
+                        else:
+                            proactive_acceptance_status = "fail"
 
-            if proactive_acceptance is None and proactive_score_value is None:
+                    if proactive_score_value is not None:
+                        if proactive_score_value >= 55:
+                            proactive_score_status = "pass"
+                        elif proactive_score_value >= 35:
+                            proactive_score_status = "warn"
+                        else:
+                            proactive_score_status = "fail"
+
+            if proactive.get("status") != "success" and proactive_acceptance is None and proactive_score_value is None:
                 # SQLite fallback: read latest persisted proactive snapshot
                 try:
                     _conn = self._get_state_conn()
