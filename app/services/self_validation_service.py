@@ -299,10 +299,38 @@ class SelfValidationService:
             with safe_list_query("pg_catalog", timeout=5) as cur:
                 cur.execute("SELECT to_regclass(%s) AS regclass", (f"public.{table_name}",))
                 row = cur.fetchone()
-                return bool(row and row["regclass"])
+                if not row:
+                    return False
+                # Handle both dict-like (RealDictRow/DictCursor) and plain tuple rows
+                try:
+                    val = row["regclass"]
+                except (TypeError, KeyError):
+                    val = row[0]
+                return bool(val)
         except Exception as exc:
             logger.warning(f"Failed to inspect PostgreSQL table {table_name}: {exc}")
             return False
+
+    def _most_recent_context_user_id(self) -> Optional[int]:
+        """Return the user_id with the most recent activity in conversation_contexts, or None."""
+        conn = self._get_state_conn()
+        if conn is None:
+            return None
+        try:
+            if not self._sqlite_table_exists(conn, "conversation_contexts"):
+                return None
+            row = conn.execute(
+                "SELECT user_id FROM conversation_contexts "
+                "WHERE user_id IS NOT NULL "
+                "ORDER BY COALESCE(end_time, created_at) DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                return int(row["user_id"])
+        except Exception as exc:
+            logger.warning(f"_most_recent_context_user_id failed: {exc}")
+        finally:
+            conn.close()
+        return None
 
     def _format_timestamp(self, value: Any) -> Optional[str]:
         if value is None:
@@ -1563,8 +1591,11 @@ class SelfValidationService:
                 "thresholds": {"pass": ">=60", "warn": ">=40", "fail": "<40"},
             }
 
-            if user_id is not None:
-                continuity = self.conversation_continuity_test(user_id)
+            # Auto-detect most recent user if none given (fixes RC1 no_data when user_id=None)
+            effective_user_id = user_id if user_id is not None else self._most_recent_context_user_id()
+
+            if effective_user_id is not None:
+                continuity = self.conversation_continuity_test(effective_user_id)
                 if continuity.get("status") == "success":
                     raw_value = continuity.get("continuity_score_percent")
                     continuity_score = float(raw_value) if raw_value is not None else None
