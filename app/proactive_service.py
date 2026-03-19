@@ -32,6 +32,7 @@ class UserResponse(str, Enum):
     ACCEPTED = "accepted"    # User acted on the suggestion
     IGNORED = "ignored"      # User didn't respond
     REJECTED = "rejected"    # User explicitly declined
+    EXPIRED = "expired"      # Hint timed out without user action (system-closed)
     PENDING = "pending"      # Waiting for response
 
 
@@ -152,6 +153,7 @@ class ProactiveMetrics:
                 "accepted": sum(r.get("accepted", 0) for r in self._responses.values()),
                 "ignored": sum(r.get("ignored", 0) for r in self._responses.values()),
                 "rejected": sum(r.get("rejected", 0) for r in self._responses.values()),
+                "expired": sum(r.get("expired", 0) for r in self._responses.values()),
             }
         }
 

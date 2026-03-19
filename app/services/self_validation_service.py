@@ -1376,8 +1376,11 @@ class SelfValidationService:
                     accepted = int(totals.get("accepted") or 0)
                     ignored = int(totals.get("ignored") or 0)
                     explicitly_rejected = int(totals.get("rejected") or 0)
+                    expired_count = int(totals.get("expired") or 0)
                     pending = int(stats.get("pending_count") or 0)
                     shown = int(totals.get("interventions") or 0)
+                    # completed_outcomes = only user-decided signals (accepted or explicit rejection)
+                    # system-expired hints do not count as user feedback
                     completed_outcomes = accepted + explicitly_rejected
 
                     acceptance_rate = (
@@ -1415,7 +1418,8 @@ class SelfValidationService:
                             "accepted": accepted,
                             "explicitly_rejected": explicitly_rejected,
                             "rejected": explicitly_rejected,
-                            "ignored_or_expired": ignored,
+                            "expired": expired_count,
+                            "ignored_or_expired": ignored + expired_count,
                             "no_feedback_yet": pending,
                             "completed_outcomes": completed_outcomes,
                             "acceptance_rate": acceptance_rate,
@@ -1462,11 +1466,13 @@ class SelfValidationService:
                         COUNT(*) FILTER (WHERE was_accepted = TRUE) AS accepted,
                         COUNT(*) FILTER (
                             WHERE was_accepted = FALSE
-                              AND (
-                                feedback_at IS NOT NULL
-                                OR NULLIF(TRIM(COALESCE(user_feedback, '')), '') IS NOT NULL
-                              )
+                              AND NULLIF(TRIM(COALESCE(user_feedback, '')), '') IS NOT NULL
                         ) AS explicitly_rejected,
+                        COUNT(*) FILTER (
+                            WHERE was_accepted = FALSE
+                              AND feedback_at IS NOT NULL
+                              AND NULLIF(TRIM(COALESCE(user_feedback, '')), '') IS NULL
+                        ) AS expired,
                         COUNT(*) FILTER (
                             WHERE was_accepted = FALSE
                               AND feedback_at IS NULL
@@ -1498,15 +1504,18 @@ class SelfValidationService:
                     else None
                 )
 
+                _expired_by_system = int(row["expired"] or 0)
                 hint_stats = {
                     "total_hints": int(row["total_hints"] or 0),
                     "shown": int(row["shown"] or 0),
                     "accepted": int(row["accepted"] or 0),
                     "explicitly_rejected": int(row["explicitly_rejected"] or 0),
                     "rejected": int(row["explicitly_rejected"] or 0),
+                    # expired: system-closed hints without explicit user signal (not counted in completed_outcomes)
+                    "expired": _expired_by_system,
                     "ambiguous_negative": int(row["ambiguous_negative"] or 0),
                     "no_feedback_yet": int(row["no_feedback_yet"] or 0),
-                    "ignored_or_expired": int(row["ignored_or_expired"] or 0),
+                    "ignored_or_expired": int(row["ignored_or_expired"] or 0) + _expired_by_system,
                     "completed_outcomes": completed_outcomes,
                     "acceptance_rate": acceptance_rate,
                     "avg_confidence": round(float(row["avg_confidence"]), 2)

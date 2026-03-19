@@ -157,13 +157,19 @@ def test_quality_score_uses_stddev_output_tokens_key():
     assert score == 92.0
 
 
-def test_proactivity_score_returns_no_data_without_table(monkeypatch):
+def test_proactivity_score_falls_back_to_in_memory_without_table(monkeypatch):
+    """When proactive_hints table is absent, falls back to in-memory stats and returns success."""
     service = SelfValidationService()
     monkeypatch.setattr(service, "_pg_table_exists", lambda table_name: False)
 
     result = service.proactivity_score()
 
-    assert result["status"] == "no_data"
+    # In-memory fallback: no interventions yet → success with empty/None stats
+    assert result["status"] == "success"
+    assert result["data_source"] == "proactive_service_memory"
+    assert result["hint_stats"]["shown"] == 0
+    assert result["proactivity_score"] is None
+    assert result["hint_stats"]["acceptance_rate"] is None
 
 
 def test_reality_check_marks_proactive_warn_for_small_samples(monkeypatch):
