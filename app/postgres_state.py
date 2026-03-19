@@ -1095,7 +1095,9 @@ def add_message(
 
 def get_conversation_history(session_id: str, limit: int = 20) -> List[Dict]:
     """Get recent messages from a conversation"""
-    with get_cursor() as cur:
+    # History rows are consumed as mapping keys below (row["role"], ...).
+    # Use dict cursor explicitly to avoid tuple-index TypeError.
+    with get_dict_cursor() as cur:
         cur.execute("""
             SELECT role, content, created_at, tokens_in, tokens_out, sources
             FROM message
