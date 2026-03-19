@@ -23,7 +23,7 @@ try:
 except ImportError:  # pragma: no cover - depends on runtime image
     psutil = None
 
-from ..db_safety import safe_aggregate_query, safe_list_query
+from ..db_safety import safe_aggregate_query, safe_list_query, safe_dict_aggregate_query, safe_dict_list_query
 from ..observability import get_logger
 
 logger = get_logger("jarvis.self_validation")
@@ -296,7 +296,7 @@ class SelfValidationService:
 
     def _pg_table_exists(self, table_name: str) -> bool:
         try:
-            with safe_list_query("pg_catalog", timeout=5) as cur:
+            with safe_dict_list_query("pg_catalog", timeout=5) as cur:
                 cur.execute("SELECT to_regclass(%s) AS regclass", (f"public.{table_name}",))
                 row = cur.fetchone()
                 if not row:
@@ -653,7 +653,7 @@ class SelfValidationService:
 
         try:
             if self._pg_table_exists("message"):
-                with safe_aggregate_query("message") as cur:
+                with safe_dict_aggregate_query("message") as cur:
                     cur.execute(
                         """
                         SELECT
@@ -676,7 +676,7 @@ class SelfValidationService:
                         "total_output": int(row["total_output"] or 0),
                     }
 
-                with safe_aggregate_query("message") as cur:
+                with safe_dict_aggregate_query("message") as cur:
                     cur.execute(
                         """
                         SELECT
@@ -697,7 +697,7 @@ class SelfValidationService:
                 data_sources.append("message")
 
             if self._pg_table_exists("jarvis_interactions"):
-                with safe_aggregate_query("jarvis_interactions") as cur:
+                with safe_dict_aggregate_query("jarvis_interactions") as cur:
                     cur.execute(
                         """
                         SELECT
@@ -717,7 +717,7 @@ class SelfValidationService:
                     }
                 data_sources.append("jarvis_interactions")
             elif self._pg_table_exists("interaction_quality"):
-                with safe_aggregate_query("interaction_quality") as cur:
+                with safe_dict_aggregate_query("interaction_quality") as cur:
                     cur.execute(
                         """
                         SELECT
@@ -738,7 +738,7 @@ class SelfValidationService:
                 data_sources.append("interaction_quality")
 
             if self._pg_table_exists("tool_audit"):
-                with safe_aggregate_query("tool_audit") as cur:
+                with safe_dict_aggregate_query("tool_audit") as cur:
                     cur.execute(
                         """
                         SELECT tool_name, COUNT(*) AS count
@@ -930,7 +930,7 @@ class SelfValidationService:
                     session_filter = f" AND session_id IN ({placeholders})"
                     params.extend(session_ids)
 
-                with safe_aggregate_query("message") as cur:
+                with safe_dict_aggregate_query("message") as cur:
                     cur.execute(
                         f"""
                         SELECT
@@ -960,7 +960,7 @@ class SelfValidationService:
                     }
                     data_source = "message"
             elif self._pg_table_exists("jarvis_interactions"):
-                with safe_aggregate_query("jarvis_interactions") as cur:
+                with safe_dict_aggregate_query("jarvis_interactions") as cur:
                     cur.execute(
                         """
                         SELECT
@@ -1029,7 +1029,7 @@ class SelfValidationService:
                     "message": "tool_audit table not found.",
                 }
 
-            with safe_aggregate_query("tool_audit") as cur:
+            with safe_dict_aggregate_query("tool_audit") as cur:
                 cur.execute(
                     """
                     SELECT
@@ -1253,7 +1253,7 @@ class SelfValidationService:
                 "positive_rate_percent": None,
             }
             if self._pg_table_exists("user_feedback"):
-                with safe_aggregate_query("user_feedback") as cur:
+                with safe_dict_aggregate_query("user_feedback") as cur:
                     cur.execute(
                         """
                         SELECT
@@ -1277,7 +1277,7 @@ class SelfValidationService:
 
             tool_success: Optional[float] = None
             if self._pg_table_exists("tool_audit"):
-                with safe_aggregate_query("tool_audit") as cur:
+                with safe_dict_aggregate_query("tool_audit") as cur:
                     cur.execute(
                         """
                         SELECT AVG(CASE WHEN success THEN 100.0 ELSE 0.0 END) AS success_rate
@@ -1295,7 +1295,7 @@ class SelfValidationService:
                 "stddev_output_tokens": None,
             }
             if self._pg_table_exists("message"):
-                with safe_aggregate_query("message") as cur:
+                with safe_dict_aggregate_query("message") as cur:
                     cur.execute(
                         """
                         SELECT
@@ -1318,7 +1318,7 @@ class SelfValidationService:
                     }
                 data_sources.append("message")
             elif self._pg_table_exists("interaction_quality"):
-                with safe_aggregate_query("interaction_quality") as cur:
+                with safe_dict_aggregate_query("interaction_quality") as cur:
                     cur.execute(
                         """
                         SELECT
@@ -1425,7 +1425,7 @@ class SelfValidationService:
                 user_filter = " AND user_id = %s"
                 params.append(user_id)
 
-            with safe_aggregate_query("proactive_hints") as cur:
+            with safe_dict_aggregate_query("proactive_hints") as cur:
                 cur.execute(
                     f"""
                     SELECT
@@ -1458,7 +1458,7 @@ class SelfValidationService:
                     else None,
                 }
 
-            with safe_aggregate_query("proactive_hints") as cur:
+            with safe_dict_aggregate_query("proactive_hints") as cur:
                 cur.execute(
                     f"""
                     SELECT hint_type, COUNT(*) AS count
@@ -1756,7 +1756,7 @@ class SelfValidationService:
             total_assessments = 0
             try:
                 if self._pg_table_exists("message"):
-                    with safe_aggregate_query("message") as cur:
+                    with safe_dict_aggregate_query("message") as cur:
                         cur.execute(
                             """
                             SELECT COUNT(*) AS total

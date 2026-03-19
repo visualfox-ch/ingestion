@@ -201,6 +201,57 @@ def safe_aggregate_query(table: str = "unknown") -> Generator:
         yield cur
 
 
+@contextmanager
+def safe_dict_list_query(table: str = "unknown", timeout: float = None) -> Generator:
+    """
+    Like safe_list_query but yields a RealDictCursor so rows support column-name access.
+    Use when query results need row["column_name"] style access.
+    """
+    effective_timeout = timeout if timeout is not None else LIST_QUERY_TIMEOUT
+    start = datetime.now()
+    try:
+        with postgres_state.get_dict_cursor() as cur:
+            timeout_ms = int(effective_timeout * 1000)
+            cur.execute(f"SET statement_timeout = {timeout_ms}")
+            yield cur
+            duration = (datetime.now() - start).total_seconds()
+            record_db_query("select", table, duration, success=True)
+    except pg_errors.QueryCanceled:
+        duration = (datetime.now() - start).total_seconds()
+        logger.error(f"Query timeout after {effective_timeout}s (dict_list, table={table})")
+        record_db_query("select", table, duration, success=False)
+        raise
+    except Exception as exc:
+        duration = (datetime.now() - start).total_seconds()
+        record_db_query("select", table, duration, success=False)
+        raise
+
+
+@contextmanager
+def safe_dict_aggregate_query(table: str = "unknown") -> Generator:
+    """
+    Like safe_aggregate_query but yields a RealDictCursor so rows support column-name access.
+    Use when query results need row["column_name"] style access.
+    """
+    start = datetime.now()
+    try:
+        with postgres_state.get_dict_cursor() as cur:
+            timeout_ms = int(AGGREGATE_QUERY_TIMEOUT * 1000)
+            cur.execute(f"SET statement_timeout = {timeout_ms}")
+            yield cur
+            duration = (datetime.now() - start).total_seconds()
+            record_db_query("aggregate", table, duration, success=True)
+    except pg_errors.QueryCanceled:
+        duration = (datetime.now() - start).total_seconds()
+        logger.error(f"Query timeout after {AGGREGATE_QUERY_TIMEOUT}s (dict_aggregate, table={table})")
+        record_db_query("aggregate", table, duration, success=False)
+        raise
+    except Exception as exc:
+        duration = (datetime.now() - start).total_seconds()
+        record_db_query("aggregate", table, duration, success=False)
+        raise
+
+
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
