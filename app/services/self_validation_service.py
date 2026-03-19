@@ -1422,8 +1422,10 @@ class SelfValidationService:
             params: List[Any] = [cutoff]
             user_filter = ""
             if user_id is not None:
+                # proactive_hints.user_id is character varying — cast to str to avoid
+                # "operator does not exist: character varying = integer"
                 user_filter = " AND user_id = %s"
-                params.append(user_id)
+                params.append(str(user_id))
 
             with safe_dict_aggregate_query("proactive_hints") as cur:
                 cur.execute(
