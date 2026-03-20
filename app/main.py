@@ -82,6 +82,7 @@ from .routers.phase2_gate_router import router as phase2_gate_router
 from .routers.skill_router import router as skill_router
 from .routers.workflow_skill_router import router as workflow_skill_router
 from .routers.voice_router import router as voice_router
+from .routers.voice_digest_router import router as voice_digest_router
 from .routers.cost_router import router as cost_router
 from .routers.discord_import_router import router as discord_import_router
 from .routers.whatsapp_router import router as whatsapp_router
@@ -208,6 +209,7 @@ app.include_router(phase2_gate_router)
 app.include_router(skill_router)
 app.include_router(workflow_skill_router)
 app.include_router(voice_router)
+app.include_router(voice_digest_router)
 app.include_router(cost_router)
 app.include_router(discord_import_router)
 app.include_router(whatsapp_router)
