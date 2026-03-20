@@ -35,6 +35,7 @@ class KnowledgeSource:
     auto_reingest: bool
     last_ingested_at: Optional[datetime]
     last_chunk_count: Optional[int]
+    content_hash: Optional[str] = None
 
 
 def get_collection_name(domain: str, explicit_name: Optional[str] = None) -> str:
@@ -60,7 +61,8 @@ def get_active_sources(domain: Optional[str] = None) -> List[KnowledgeSource]:
                 """
                 SELECT id, domain, subdomain, file_path, title, version,
                        collection_name, owner, channel, language, quality,
-                       active, auto_reingest, last_ingested_at, last_chunk_count
+                       active, auto_reingest, last_ingested_at, last_chunk_count,
+                       content_hash
                 FROM knowledge_sources
                 WHERE active = true AND domain = %s
                 ORDER BY subdomain, title
@@ -72,7 +74,8 @@ def get_active_sources(domain: Optional[str] = None) -> List[KnowledgeSource]:
                 """
                 SELECT id, domain, subdomain, file_path, title, version,
                        collection_name, owner, channel, language, quality,
-                       active, auto_reingest, last_ingested_at, last_chunk_count
+                       active, auto_reingest, last_ingested_at, last_chunk_count,
+                       content_hash
                 FROM knowledge_sources
                 WHERE active = true
                 ORDER BY domain, subdomain, title
@@ -98,7 +101,8 @@ def get_active_sources(domain: Optional[str] = None) -> List[KnowledgeSource]:
             active=row['active'],
             auto_reingest=row['auto_reingest'] or False,
             last_ingested_at=row['last_ingested_at'],
-            last_chunk_count=row['last_chunk_count']
+            last_chunk_count=row['last_chunk_count'],
+            content_hash=row.get('content_hash')
         ))
 
     return sources
@@ -124,7 +128,8 @@ def get_source_by_id(source_id: str) -> Optional[KnowledgeSource]:
             """
             SELECT id, domain, subdomain, file_path, title, version,
                    collection_name, owner, channel, language, quality,
-                   active, auto_reingest, last_ingested_at, last_chunk_count
+                   active, auto_reingest, last_ingested_at, last_chunk_count,
+                   content_hash
             FROM knowledge_sources
             WHERE id = %s
             """,
@@ -150,7 +155,8 @@ def get_source_by_id(source_id: str) -> Optional[KnowledgeSource]:
         active=row['active'],
         auto_reingest=row['auto_reingest'] or False,
         last_ingested_at=row['last_ingested_at'],
-        last_chunk_count=row['last_chunk_count']
+        last_chunk_count=row['last_chunk_count'],
+        content_hash=row.get('content_hash')
     )
 
 
@@ -299,7 +305,8 @@ def remove_knowledge_source(
 def update_ingestion_status(
     source_id: uuid.UUID,
     chunk_count: int,
-    error: Optional[str] = None
+    error: Optional[str] = None,
+    content_hash: Optional[str] = None
 ):
     """Aktualisiert den Ingestion-Status einer Source."""
     with get_dict_cursor() as cur:
@@ -321,10 +328,11 @@ def update_ingestion_status(
                     last_ingested_at = now(),
                     last_chunk_count = %s,
                     last_error = NULL,
+                    content_hash = COALESCE(%s, content_hash),
                     updated_at = now()
                 WHERE id = %s
                 """,
-                (chunk_count, str(source_id))
+                (chunk_count, content_hash, str(source_id))
             )
 
 

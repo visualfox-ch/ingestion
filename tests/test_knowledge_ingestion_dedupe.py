@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from app.services import knowledge_ingestion
+from app.services.knowledge_ingestion import _stable_content_hash
 from app.services.knowledge_sources import KnowledgeSource
 
 
@@ -26,6 +27,34 @@ def _source(title: str, version: str, file_path: str, subdomain: str = "fastapi_
         last_ingested_at=None,
         last_chunk_count=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# _stable_content_hash tests
+# ---------------------------------------------------------------------------
+
+def test_stable_content_hash_ignores_fetched_at_timestamp():
+    """Same page content with different Fetched-At timestamps → same hash."""
+    body = "# FastAPI\n\nFastAPI is a modern, fast web framework.\n\n- Fast\n- Easy\n"
+    content_a = f"# FastAPI\n\nSource: https://fastapi.tiangolo.com/\n\nFetched-At: 2026-03-20T22:00:00Z\n\n{body}"
+    content_b = f"# FastAPI\n\nSource: https://fastapi.tiangolo.com/\n\nFetched-At: 2026-03-21T08:00:00Z\n\n{body}"
+
+    assert _stable_content_hash(content_a) == _stable_content_hash(content_b)
+
+
+def test_stable_content_hash_detects_real_content_change():
+    """Genuinely changed page content → different hash."""
+    header = "# FastAPI\n\nSource: https://fastapi.tiangolo.com/\n\nFetched-At: 2026-03-21T08:00:00Z\n\n"
+    content_a = header + "FastAPI is fast."
+    content_b = header + "FastAPI is fast. And easy."
+
+    assert _stable_content_hash(content_a) != _stable_content_hash(content_b)
+
+
+def test_stable_content_hash_without_fetched_at_is_stable():
+    """Content without Fetched-At header hashes consistently."""
+    content = "# Regular doc\n\nSome text here.\n"
+    assert _stable_content_hash(content) == _stable_content_hash(content)
 
 
 @pytest.mark.asyncio

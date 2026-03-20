@@ -165,6 +165,20 @@ def ensure_collection(client: QdrantClient, collection_name: str):
 # PostgreSQL-Integration
 # ============================================================================
 
+_VOLATILE_HEADER_RE = re.compile(r'^Fetched-At: .+$', re.MULTILINE)
+
+
+def _stable_content_hash(content: str) -> str:
+    """SHA256 over content with volatile header fields stripped.
+
+    The web_docs snapshot writer embeds a 'Fetched-At:' timestamp on every
+    crawl, making the raw SHA256 differ even when page text is unchanged.
+    Stripping that line before hashing gives a stable fingerprint.
+    """
+    stable = _VOLATILE_HEADER_RE.sub('', content)
+    return hashlib.sha256(stable.encode()).hexdigest()[:32]
+
+
 def upsert_document(
     title: str,
     content: str,
@@ -174,7 +188,7 @@ def upsert_document(
     Fügt Dokument ein oder aktualisiert es (basierend auf title + version).
     Returns: (document_id, is_changed)
     """
-    content_hash = hashlib.sha256(content.encode()).hexdigest()[:32]
+    content_hash = _stable_content_hash(content)
 
     with get_dict_cursor() as cur:
         cur.execute(
