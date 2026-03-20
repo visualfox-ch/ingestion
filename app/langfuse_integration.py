@@ -726,3 +726,162 @@ def get_langfuse_status() -> Dict[str, Any]:
         "connected": is_langfuse_enabled(),
         "host": LANGFUSE_HOST if is_langfuse_enabled() else None,
     }
+
+
+def get_session_costs(session_id: str, limit: int = 100) -> Dict[str, Any]:
+    """
+    Get LLM costs for a specific session from Langfuse.
+
+    Args:
+        session_id: The session identifier (e.g., Claude Code session)
+        limit: Max traces to fetch
+
+    Returns:
+        Dict with total costs, token counts, and breakdown by model
+    """
+    client = get_langfuse()
+    if not client:
+        return {
+            "error": "Langfuse not available",
+            "session_id": session_id,
+        }
+
+    try:
+        # Query traces for this session
+        traces = client.fetch_traces(
+            session_id=session_id,
+            limit=limit,
+        )
+
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_cost = 0.0
+        model_breakdown = {}
+        trace_count = 0
+
+        for trace in traces.data:
+            trace_count += 1
+            # Aggregate observations (LLM calls) within trace
+            if hasattr(trace, 'observations'):
+                for obs in trace.observations:
+                    if obs.type == 'generation':
+                        model = obs.model or 'unknown'
+                        input_tokens = obs.usage.input or 0 if obs.usage else 0
+                        output_tokens = obs.usage.output or 0 if obs.usage else 0
+                        cost = obs.calculated_total_cost or 0
+
+                        total_input_tokens += input_tokens
+                        total_output_tokens += output_tokens
+                        total_cost += cost
+
+                        if model not in model_breakdown:
+                            model_breakdown[model] = {
+                                "input_tokens": 0,
+                                "output_tokens": 0,
+                                "cost": 0.0,
+                                "calls": 0,
+                            }
+                        model_breakdown[model]["input_tokens"] += input_tokens
+                        model_breakdown[model]["output_tokens"] += output_tokens
+                        model_breakdown[model]["cost"] += cost
+                        model_breakdown[model]["calls"] += 1
+
+        return {
+            "session_id": session_id,
+            "trace_count": trace_count,
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_tokens": total_input_tokens + total_output_tokens,
+            "total_cost_usd": round(total_cost, 4),
+            "model_breakdown": model_breakdown,
+        }
+
+    except Exception as e:
+        log_with_context(logger, "error", "Failed to fetch session costs",
+                        session_id=session_id, error=str(e))
+        return {
+            "error": str(e),
+            "session_id": session_id,
+        }
+
+
+def get_recent_sessions_costs(hours: int = 24, limit: int = 20) -> Dict[str, Any]:
+    """
+    Get costs for recent sessions.
+
+    Args:
+        hours: Look back period in hours
+        limit: Max sessions to return
+
+    Returns:
+        Dict with session costs summary
+    """
+    client = get_langfuse()
+    if not client:
+        return {"error": "Langfuse not available"}
+
+    try:
+        from datetime import datetime, timedelta
+        from_time = datetime.utcnow() - timedelta(hours=hours)
+
+        # Fetch recent traces grouped by session
+        traces = client.fetch_traces(
+            limit=500,  # Fetch more to aggregate
+            from_timestamp=from_time,
+        )
+
+        sessions = {}
+        for trace in traces.data:
+            sid = trace.session_id or "no-session"
+            if sid not in sessions:
+                sessions[sid] = {
+                    "session_id": sid,
+                    "traces": 0,
+                    "total_tokens": 0,
+                    "total_cost": 0.0,
+                    "first_seen": None,
+                    "last_seen": None,
+                }
+
+            sessions[sid]["traces"] += 1
+
+            if trace.timestamp:
+                ts = trace.timestamp
+                if sessions[sid]["first_seen"] is None or ts < sessions[sid]["first_seen"]:
+                    sessions[sid]["first_seen"] = ts
+                if sessions[sid]["last_seen"] is None or ts > sessions[sid]["last_seen"]:
+                    sessions[sid]["last_seen"] = ts
+
+            if hasattr(trace, 'observations'):
+                for obs in trace.observations:
+                    if obs.type == 'generation':
+                        tokens = (obs.usage.input or 0) + (obs.usage.output or 0) if obs.usage else 0
+                        cost = obs.calculated_total_cost or 0
+                        sessions[sid]["total_tokens"] += tokens
+                        sessions[sid]["total_cost"] += cost
+
+        # Sort by cost descending, take top N
+        sorted_sessions = sorted(
+            sessions.values(),
+            key=lambda x: x["total_cost"],
+            reverse=True
+        )[:limit]
+
+        # Format timestamps
+        for s in sorted_sessions:
+            if s["first_seen"]:
+                s["first_seen"] = s["first_seen"].isoformat()
+            if s["last_seen"]:
+                s["last_seen"] = s["last_seen"].isoformat()
+            s["total_cost"] = round(s["total_cost"], 4)
+
+        return {
+            "hours": hours,
+            "session_count": len(sorted_sessions),
+            "sessions": sorted_sessions,
+        }
+
+    except Exception as e:
+        log_with_context(logger, "error", "Failed to fetch recent sessions",
+                        error=str(e))
+        return {"error": str(e)}

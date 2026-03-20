@@ -6,7 +6,7 @@ import os
 import re
 import requests
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -28,7 +28,6 @@ DASHBOARD_CACHE_TTL = 30  # seconds
 def get_metrics():
     """Get runtime metrics for observability including connection pools, LLM, RAG, and proactive stats"""
     from ..observability import metrics, embedding_cache, query_cache, llm_metrics, rag_metrics
-    from ..connection_pool_metrics import export_all_pool_metrics
 
     # Get base metrics
     base_metrics = {
@@ -825,3 +824,36 @@ def query_prometheus(
         "resultType": data.get("data", {}).get("resultType"),
         "result": result,
     }
+
+
+# =============================================================================
+# LANGFUSE SESSION COSTS (AI Dev Ops Integration)
+# =============================================================================
+
+@router.get("/langfuse/session-costs")
+def get_langfuse_session_costs(session_id: str, limit: int = 100):
+    """
+    Get LLM costs for a specific session from Langfuse.
+
+    Used by VS Code AI Dev Ops to track costs per Claude Code session.
+    """
+    from ..langfuse_integration import get_session_costs
+    return get_session_costs(session_id, limit)
+
+
+@router.get("/langfuse/recent-sessions")
+def get_langfuse_recent_sessions(hours: int = 24, limit: int = 20):
+    """
+    Get costs for recent sessions from Langfuse.
+
+    Returns sessions sorted by cost (highest first).
+    """
+    from ..langfuse_integration import get_recent_sessions_costs
+    return get_recent_sessions_costs(hours, limit)
+
+
+@router.get("/langfuse/status")
+def get_langfuse_integration_status():
+    """Get Langfuse integration status."""
+    from ..langfuse_integration import get_langfuse_status
+    return get_langfuse_status()
