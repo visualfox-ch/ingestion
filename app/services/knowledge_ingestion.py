@@ -367,6 +367,10 @@ def ingest_knowledge_source(
     }
 
 
+def _source_identity_key(source: KnowledgeSource) -> tuple[str, str]:
+    return (source.title.strip().lower(), source.version.strip())
+
+
 async def ingest_domain(domain: str) -> list[dict]:
     """Ingestet alle aktiven Sources einer Domain."""
     sources = get_active_sources(domain)
@@ -375,8 +379,24 @@ async def ingest_domain(domain: str) -> list[dict]:
 
     qdrant = get_qdrant_client()
     results = []
+    seen_keys: set[tuple[str, str]] = set()
 
     for source in sources:
+        source_key = _source_identity_key(source)
+        if source_key in seen_keys:
+            results.append(
+                {
+                    "status": "skipped",
+                    "title": source.title,
+                    "domain": source.domain,
+                    "subdomain": source.subdomain,
+                    "version": source.version,
+                    "message": "Skipped duplicate source identity (title+version) in same run",
+                }
+            )
+            continue
+
+        seen_keys.add(source_key)
         result = ingest_knowledge_source(qdrant, source)
         results.append(result)
 
@@ -392,8 +412,24 @@ async def ingest_all_domains() -> dict:
     for domain in domains:
         sources = get_active_sources(domain)
         domain_results = []
+        seen_keys: set[tuple[str, str]] = set()
 
         for source in sources:
+            source_key = _source_identity_key(source)
+            if source_key in seen_keys:
+                domain_results.append(
+                    {
+                        "status": "skipped",
+                        "title": source.title,
+                        "domain": source.domain,
+                        "subdomain": source.subdomain,
+                        "version": source.version,
+                        "message": "Skipped duplicate source identity (title+version) in same run",
+                    }
+                )
+                continue
+
+            seen_keys.add(source_key)
             result = ingest_knowledge_source(qdrant, source)
             domain_results.append(result)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -62,6 +63,24 @@ def _is_allowed_url(url: str, allowed_domains: list[str]) -> bool:
     return bool(host) and any(host == domain or host.endswith(f".{domain}") for domain in allowed)
 
 
+def _normalize_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return url
+
+    netloc = parsed.netloc.lower()
+    if netloc.endswith(":80") and parsed.scheme == "http":
+        netloc = netloc[:-3]
+    elif netloc.endswith(":443") and parsed.scheme == "https":
+        netloc = netloc[:-4]
+
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/") or "/"
+
+    return parsed._replace(scheme=parsed.scheme.lower(), netloc=netloc, path=path, fragment="").geturl()
+
+
 def _extract_links(base_url: str, soup: BeautifulSoup, allowed_domains: list[str]) -> list[str]:
     links: list[str] = []
     seen: set[str] = set()
@@ -70,10 +89,10 @@ def _extract_links(base_url: str, soup: BeautifulSoup, allowed_domains: list[str
         if not href:
             continue
         candidate = urljoin(base_url, href)
-        parsed = urlparse(candidate)
+        normalized = _normalize_url(candidate)
+        parsed = urlparse(normalized)
         if parsed.scheme not in {"http", "https"}:
             continue
-        normalized = parsed._replace(fragment="").geturl()
         if normalized in seen:
             continue
         if not _is_allowed_url(normalized, allowed_domains):
@@ -122,6 +141,8 @@ def run_web_docs_snapshot(
     config: SnapshotConfig,
     fetcher: Callable[[str, float], tuple[str, str, str]] | None = None,
 ) -> dict:
+    started_at = time.perf_counter()
+
     if not config.start_urls:
         raise ValueError("start_urls must not be empty")
     if not config.allowed_domains:
@@ -131,30 +152,42 @@ def run_web_docs_snapshot(
     if config.max_depth < 0:
         raise ValueError("max_depth must be >= 0")
 
+    normalized_starts: list[str] = []
     for start_url in config.start_urls:
-        if not _is_allowed_url(start_url, config.allowed_domains):
+        normalized = _normalize_url(start_url)
+        if not _is_allowed_url(normalized, config.allowed_domains):
             raise ValueError(f"start_url not allowlisted: {start_url}")
+        if normalized not in normalized_starts:
+            normalized_starts.append(normalized)
 
     snapshot_root = Path(config.output_path)
     snapshot_root.mkdir(parents=True, exist_ok=True)
 
     files: list[SnapshotFile] = []
-    queue: list[tuple[str, int]] = [(url, 0) for url in config.start_urls]
+    queue: deque[tuple[str, int]] = deque((url, 0) for url in normalized_starts)
+    queued_urls: set[str] = set(normalized_starts)
     visited: set[str] = set()
     fetch = fetcher or _fetch
     backend_used: str | None = None
+    pages_attempted = 0
+    pages_skipped_content_type = 0
+    allowed_content_types = {
+        value.lower() for value in (config.allowed_content_types or ["text/html"])
+    }
 
     while queue and len(files) < config.max_pages:
-        current_url, depth = queue.pop(0)
+        current_url, depth = queue.popleft()
+        queued_urls.discard(current_url)
         if current_url in visited:
             continue
         visited.add(current_url)
 
         html, content_type, backend = fetch(current_url, config.timeout_seconds)
+        pages_attempted += 1
         backend_used = backend
         normalized_content_type = _normalize_content_type(content_type)
-        allowed_content_types = config.allowed_content_types or ["text/html"]
-        if normalized_content_type not in {value.lower() for value in allowed_content_types}:
+        if normalized_content_type not in allowed_content_types:
+            pages_skipped_content_type += 1
             logger.info("Skipping web docs page due to content type", extra={"url": current_url, "content_type": normalized_content_type})
             continue
 
@@ -192,11 +225,15 @@ def run_web_docs_snapshot(
 
         if config.follow_links and depth < config.max_depth and len(files) < config.max_pages:
             for next_url in _extract_links(current_url, soup, config.allowed_domains):
-                if next_url not in visited:
-                    queue.append((next_url, depth + 1))
+                if next_url in visited or next_url in queued_urls:
+                    continue
+                queue.append((next_url, depth + 1))
+                queued_urls.add(next_url)
 
         if config.rate_limit_ms > 0 and len(files) < config.max_pages:
             time.sleep(config.rate_limit_ms / 1000.0)
+
+    crawl_seconds = round(time.perf_counter() - started_at, 3)
 
     return {
         "status": "completed",
@@ -206,4 +243,11 @@ def run_web_docs_snapshot(
         "output_path": config.output_path,
         "domain": config.domain,
         "subdomain": config.subdomain,
+        "stats": {
+            "pages_attempted": pages_attempted,
+            "pages_visited": len(visited),
+            "pages_saved": len(files),
+            "pages_skipped_content_type": pages_skipped_content_type,
+            "crawl_seconds": crawl_seconds,
+        },
     }

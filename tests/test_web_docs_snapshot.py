@@ -86,7 +86,35 @@ def test_run_web_docs_snapshot_follows_links_within_limit(tmp_path):
     result = run_web_docs_snapshot(config, fetcher=fake_fetch)
 
     assert result["count"] == 2
+    assert result["stats"]["pages_saved"] == 2
+    assert result["stats"]["pages_attempted"] == 2
     assert {Path(item["file_path"]).name for item in result["files"]} == {
         "index-html.md",
         "intro-html.md",
     }
+
+
+def test_run_web_docs_snapshot_normalizes_start_urls_to_avoid_duplicate_fetch(tmp_path):
+    config = SnapshotConfig(
+        domain="web_docs",
+        subdomain="fastapi_docs",
+        start_urls=[
+            "https://fastapi.tiangolo.com/tutorial",
+            "https://fastapi.tiangolo.com/tutorial/",
+            "https://FASTAPI.tiangolo.com/tutorial#intro",
+        ],
+        allowed_domains=["fastapi.tiangolo.com"],
+        output_path=str(tmp_path),
+        max_pages=3,
+    )
+
+    fetch_calls: list[str] = []
+
+    def fake_fetch(url: str, timeout_seconds: float):
+        fetch_calls.append(url)
+        return "<html><head><title>Tutorial</title></head><body><main><p>One</p></main></body></html>", "text/html", "requests"
+
+    result = run_web_docs_snapshot(config, fetcher=fake_fetch)
+
+    assert result["count"] == 1
+    assert fetch_calls == ["https://fastapi.tiangolo.com/tutorial"]
