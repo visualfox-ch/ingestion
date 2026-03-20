@@ -6,8 +6,10 @@ Ersetzt hardcoded linkedin/visualfox Config mit DB-gesteuerter Verwaltung.
 """
 
 from fastapi import APIRouter, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from typing import Any, Optional, List
+import asyncio
 import requests
 
 from ..services.knowledge_sources import (
@@ -232,8 +234,20 @@ async def snapshot_web_docs(request: WebDocsSnapshotRequest):
         follow_links=request.follow_links,
     )
 
+    # run_web_docs_snapshot performs blocking network/file IO and must not run on the event loop thread
+    snapshot_timeout_budget = max(request.timeout_seconds * max(request.max_pages, 1), 30.0)
+
     try:
-        snapshot_result = run_web_docs_snapshot(config)
+        async with asyncio.timeout(snapshot_timeout_budget):
+            snapshot_result = await run_in_threadpool(run_web_docs_snapshot, config)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                "Snapshot crawl exceeded server timeout budget. "
+                f"budget={snapshot_timeout_budget:.1f}s"
+            ),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except requests.exceptions.SSLError as exc:

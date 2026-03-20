@@ -92,6 +92,34 @@ class HealthResponse(BaseModel):
     elevenlabs_configured: bool
 
 
+class ProoflistPreviewRequest(BaseModel):
+    """Request payload for a read-only markdown prooflist preview."""
+    source_path: str = Field(..., description="Absolute markdown source path")
+    output_root: str = Field(
+        "/brain/data/audio_prooflists/visualfox",
+        description="Absolute output root under /brain/data/audio_prooflists/",
+    )
+    provider: str = Field("elevenlabs", description="TTS provider: elevenlabs or openai")
+    voice: Optional[str] = Field(None, description="Provider voice ID")
+    speed: float = Field(1.0, ge=0.25, le=4.0, description="Speech speed multiplier")
+    format: str = Field("mp3", description="Output format (mp3, opus, aac, flac, wav)")
+    overwrite: bool = Field(False, description="Overwrite existing generated artifacts")
+
+
+class ProoflistPreviewResponse(BaseModel):
+    """Response payload with generated prooflist artifact paths and traceability."""
+    source_path: str
+    output_audio_path: str
+    output_metadata_path: str
+    provider: str
+    voice_id: str
+    format: str
+    character_count: int
+    source_sha256: str
+    review_status: str
+    review_options: list[str]
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -276,8 +304,74 @@ async def list_voices(provider: Optional[str] = None):
 
     except HTTPException:
         raise
+    except RuntimeError as e:
+        logger.warning(f"List voices upstream error: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         logger.error(f"List voices error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/prooflist/preview", response_model=ProoflistPreviewResponse)
+async def prooflist_preview(request: ProoflistPreviewRequest):
+    """Generate a read-only prooflist audio preview from a markdown draft."""
+    try:
+        from ..services.voice_prooflist import (
+            VoiceProoflistSynthesisError,
+            VoiceProoflistValidationError,
+            get_voice_prooflist_service,
+        )
+        from ..services.voice_tts import OutputFormat, TTSProvider
+
+        service = get_voice_prooflist_service()
+
+        try:
+            provider = TTSProvider(request.provider.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid provider: {request.provider}. Use 'openai' or 'elevenlabs'",
+            )
+
+        try:
+            output_format = OutputFormat(request.format.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid format: {request.format}. Use mp3, opus, aac, flac, or wav",
+            )
+
+        result = await service.generate_preview(
+            source_path=request.source_path,
+            output_root=request.output_root,
+            provider=provider,
+            voice_id=request.voice,
+            speed=request.speed,
+            output_format=output_format,
+            overwrite=request.overwrite,
+        )
+
+        return ProoflistPreviewResponse(
+            source_path=result.source_path,
+            output_audio_path=result.output_audio_path,
+            output_metadata_path=result.output_metadata_path,
+            provider=result.provider,
+            voice_id=result.voice_id,
+            format=result.format,
+            character_count=result.character_count,
+            source_sha256=result.source_sha256,
+            review_status=result.review_status,
+            review_options=result.review_options,
+        )
+
+    except HTTPException:
+        raise
+    except VoiceProoflistValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except VoiceProoflistSynthesisError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.error(f"Prooflist preview error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

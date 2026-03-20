@@ -344,18 +344,26 @@ class VoiceTTS:
                             "https://api.elevenlabs.io/v1/voices",
                             headers={"xi-api-key": self._elevenlabs_key},
                         ) as response:
-                            if response.status == 200:
-                                data = await response.json()
-                                voices.extend([
-                                    {
-                                        "provider": "elevenlabs",
-                                        "id": v["voice_id"],
-                                        "name": v["name"],
-                                    }
-                                    for v in data.get("voices", [])
-                                ])
+                            if response.status != 200:
+                                detail = (await response.text()).strip()
+                                raise RuntimeError(
+                                    f"ElevenLabs voices API error ({response.status}): {detail[:240]}"
+                                )
+
+                            data = await response.json()
+                            voices.extend([
+                                {
+                                    "provider": "elevenlabs",
+                                    "id": v["voice_id"],
+                                    "name": v["name"],
+                                }
+                                for v in data.get("voices", [])
+                            ])
+                except RuntimeError:
+                    raise
                 except Exception as e:
                     logger.error(f"Failed to fetch ElevenLabs voices: {e}")
+                    raise RuntimeError("Failed to fetch ElevenLabs voices") from e
 
         return voices
 
