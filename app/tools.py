@@ -257,6 +257,11 @@ from .tool_modules.tool_meta_tools import (
     tool_get_tool_performance,
     tool_get_tool_recommendations,
 )
+from .tool_modules.deploy_tools import (
+    tool_deploy_code_changes,
+    tool_validate_deploy_readiness,
+    tool_get_deploy_history,
+)
 
 # Retrieval tuning (best-practice defaults)
 RERANK_ALPHA = float(os.getenv("JARVIS_RERANK_ALPHA", "0.7"))  # vector weight
@@ -3529,6 +3534,54 @@ Use this to understand what's currently being worked on and what's planned.""",
                 }
             }
         }
+    },
+
+    # ============ Self-Deploy Tools (Jarvis Autonomy) ============
+
+    {
+        "name": "deploy_code_changes",
+        "description": "Deploy code changes to production (Jarvis self-deploy). Validates syntax, checks for critical file changes, restarts container, and auto-rolls back on health failure. Requires autonomy level >= 2.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "validate_only": {
+                    "type": "boolean",
+                    "description": "If true, only validate without deploying",
+                    "default": False
+                },
+                "skip_critical_check": {
+                    "type": "boolean",
+                    "description": "Skip critical file warning (requires prior review)",
+                    "default": False
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for deployment (for audit log)"
+                }
+            }
+        }
+    },
+    {
+        "name": "validate_deploy_readiness",
+        "description": "Check if code is ready for deployment. Validates Python syntax, import structure, critical file changes, and current health status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_deploy_history",
+        "description": "Get recent deployment history including restart events and timing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of entries to return",
+                    "default": 10
+                }
+            }
+        }
     }
 ]
 
@@ -4200,6 +4253,10 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "read_agent_context": tool_read_agent_context,
     "set_context_privacy_boundary": tool_set_context_privacy_boundary,
     "get_context_pool_stats": tool_get_context_pool_stats,
+    # Self-Deploy Tools (Jarvis autonomy)
+    "deploy_code_changes": tool_deploy_code_changes,
+    "validate_deploy_readiness": tool_validate_deploy_readiness,
+    "get_deploy_history": tool_get_deploy_history,
 }
 
 # Load connector-provided tools (auto-discovery in app/connectors)
@@ -5799,6 +5856,24 @@ try:
     log_with_context(logger, "info", "SaaS Agent tools loaded (Phase 22A-10)", count=len(SAAS_TOOLS))
 except Exception as e:
     log_with_context(logger, "warning", "SaaS Agent tools load failed", error=str(e))
+
+# Load Knowledge Tools (API Context Packs -- T-20260319-API-CONTEXT-PACK-READ-PATH)
+try:
+    from .tool_modules.knowledge_tools import (
+        KNOWLEDGE_TOOLS,
+        tool_list_api_context_packs,
+        tool_read_api_context_pack,
+        tool_search_api_context_packs,
+    )
+    TOOL_DEFINITIONS.extend(KNOWLEDGE_TOOLS)
+    TOOL_REGISTRY.update({
+        "list_api_context_packs": tool_list_api_context_packs,
+        "read_api_context_pack": tool_read_api_context_pack,
+        "search_api_context_packs": tool_search_api_context_packs,
+    })
+    log_with_context(logger, "info", "Knowledge tools loaded (API Context Packs)", count=len(KNOWLEDGE_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Knowledge tools load failed", error=str(e))
 
 def execute_tool(
     tool_name: str,

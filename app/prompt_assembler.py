@@ -1867,6 +1867,20 @@ def get_tools_for_query(query: str, query_class: str = "standard") -> List[str]:
                 "welche domains", "welche sources", "bump version",
             ],
         },
+        # Self-Deploy (Jarvis Autonomy)
+        "deploy": {
+            "tools": [
+                "deploy_code_changes", "validate_deploy_readiness", "get_deploy_history",
+            ],
+            "keywords": [
+                "deploy", "deployment", "bereitstellen", "bereitstellung",
+                "selbst deployen", "self deploy", "ausrollen", "rollout",
+                "deploy code", "code deployen", "restart container",
+                "container restart", "validate deploy", "deploy readiness",
+                "deploy history", "deploy verlauf", "syntax check",
+                "auto deploy", "selbständig deployen",
+            ],
+        },
     }
 
     # Dynamically add all loaded dynamic tools to self_modification category

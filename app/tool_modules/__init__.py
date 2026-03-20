@@ -16,6 +16,7 @@ Contains tool modules that extend Jarvis's capabilities:
 - pr_draft_agent_tools: Tier 3 Autonomy - Issue to PR draft with approval workflow
 - linkedin_coach_tools: LinkedIn content generation with anti-AI-voice and coach mode
 - saas_tools: SaaS Agent (Phase 22A-10) -- funnel metrics, growth experiments, ICP signals, pricing hypotheses
+- knowledge_tools: API Context Pack access — list/read/search curated API packs (T-20260319-API-CONTEXT-PACK-READ-PATH)
 - agent_coordination_tools: Multi-agent coordination, delegation, queues, consensus (Phase 22A-22B)
 - search_tools: Knowledge search, email search, chat search, web search
 - calendar_tools: Google Calendar integration, git events
@@ -31,10 +32,12 @@ Contains tool modules that extend Jarvis's capabilities:
 - generation_tools: Diagram and image generation
 - causal_tools: Predictive context, causal patterns
 - tool_meta_tools: Tool registry management, chains, performance
+- deploy_tools: Self-deployment capabilities with safety guardrails
 """
 
 # Utility Tools
 from .utility_tools import (
+    tool_get_version,
     tool_no_tool_needed,
     tool_request_out_of_scope,
     tool_complete_pending_action,
@@ -76,6 +79,13 @@ from .tool_meta_tools import (
     tool_get_popular_tool_chains,
     tool_get_tool_performance,
     tool_get_tool_recommendations,
+)
+
+# Deploy Tools (Self-deployment capabilities)
+from .deploy_tools import (
+    tool_deploy_code_changes,
+    tool_validate_deploy_readiness,
+    tool_get_deploy_history,
 )
 
 # Introspection Tools
@@ -241,4 +251,11 @@ from .agent_coordination_tools import (
     tool_read_agent_context,
     tool_set_context_privacy_boundary,
     tool_get_context_pool_stats,
+)
+
+# Knowledge Tools (API Context Packs)
+from .knowledge_tools import (
+    tool_list_api_context_packs,
+    tool_read_api_context_pack,
+    tool_search_api_context_packs,
 )

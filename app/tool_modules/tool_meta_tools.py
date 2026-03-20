@@ -30,6 +30,9 @@ def tool_list_available_tools(category: str = None, search: str = None, **kwargs
     metrics.inc("tool_list_available_tools")
 
     try:
+        # Lazy import to avoid circular dependency
+        from ..tools import TOOL_REGISTRY
+
         # Get all registered tools
         all_tools = list(TOOL_REGISTRY.keys())
 

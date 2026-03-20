@@ -1257,7 +1257,7 @@ def run_agent(
         scope = ScopeRef.from_legacy_namespace(namespace)
 
     # Build system prompt from role
-    system_prompt = build_system_prompt(None, role_config)  # Will use role's prompt
+    system_prompt = build_system_prompt("", role_config) or ""  # Use empty string as base, ensure non-None
 
     # Phase A: Inject corrections from pre-query hook
     if corrections_hint:

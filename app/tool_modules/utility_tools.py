@@ -4,12 +4,33 @@ Utility Tools.
 Basic utility functions: no_tool, out_of_scope, pending actions, hints.
 Extracted from tools.py (Phase S6).
 """
+import sys
 from typing import Dict, Any
-from datetime import datetime
+from datetime import date, datetime
 
 from ..observability import get_logger, log_with_context, metrics
 
 logger = get_logger("jarvis.tools.utility")
+
+
+def tool_get_version() -> dict:
+    """
+    Get Jarvis version and build information.
+
+    Returns:
+        dict with version, build_date, python_version, capabilities_count
+    """
+    from ..tools import TOOL_REGISTRY
+
+    log_with_context(logger, "info", "Tool: get_version")
+    metrics.inc("tool_get_version")
+
+    return {
+        "version": "1.0.0",
+        "build_date": date.today().isoformat(),
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "capabilities_count": len(TOOL_REGISTRY),
+    }
 
 
 def tool_no_tool_needed(reason: str = "", **kwargs) -> Dict[str, Any]:
@@ -250,5 +271,4 @@ BLOCKED_PATTERNS = [
 
 AUDIT_DIR_DOCKER = "/brain/system/ingestion/audit"
 AUDIT_DIR_MAC = "/Volumes/BRAIN/system/ingestion/audit"
-
 
