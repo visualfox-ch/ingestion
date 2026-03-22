@@ -21,6 +21,7 @@ from .roles import get_role, build_system_prompt, detect_role, ROLES
 from .tracing import get_trace_context
 from .memory import MemoryStore, StateInference
 from .agent_state import AgentState
+from .capability_paths import get_capabilities_json_path
 from .context_builder import ContextBuilder
 from .tool_executor import ToolExecutor
 from .agent_provider_loop import (
@@ -1276,9 +1277,9 @@ def run_agent(
         from pathlib import Path
         import json
         
-        cap_file = Path("/brain/system/docs/CAPABILITIES.json")
+        cap_file = get_capabilities_json_path()
         if cap_file.exists():
-            with open(cap_file, "r") as f:
+            with cap_file.open("r", encoding="utf-8") as f:
                 capabilities = json.load(f)
                 cap_version = capabilities.get("version", "unknown")
                 
@@ -1688,7 +1689,7 @@ def run_agent(
         tool_names = sorted([t['name'] for t in tools])
 
         # Identify key tool categories
-        self_improvement_tools = [t for t in tool_names if t in ['write_dynamic_tool', 'promote_sandbox_tool', 'system_pulse', 'list_available_tools']]
+        self_improvement_tools = [t for t in tool_names if t in ['write_dynamic_tool', 'promote_sandbox_tool', 'list_available_tools']]
         memory_tools = [t for t in tool_names if 'remember' in t or 'recall' in t or 'knowledge' in t]
 
         tool_awareness_block = f"""

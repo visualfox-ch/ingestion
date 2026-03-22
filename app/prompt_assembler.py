@@ -1544,7 +1544,7 @@ def get_tools_for_query(query: str, query_class: str = "standard") -> List[str]:
             "keywords": [
                 # Direct tool name triggers (underscore and without)
                 "write_dynamic_tool", "write_dynamic", "dynamic_tool",
-                "system_pulse", "promote_sandbox", "list_available",
+                "promote_sandbox", "list_available",
                 # German phrases
                 "write tool", "schreib tool", "erstell tool", "create tool", "neues tool",
                 "dynamic tool", "dynamisch", "self modify", "selbst modifiz", "selbstmodifik",
@@ -1889,7 +1889,7 @@ def get_tools_for_query(query: str, query_class: str = "standard") -> List[str]:
         dynamic_tool_names = list(DynamicToolLoader.get_all_tools().keys())
         # Always include core self-modification tools
         core_self_mod = [
-            "write_dynamic_tool", "promote_sandbox_tool", "system_pulse",
+            "write_dynamic_tool", "promote_sandbox_tool",
             "record_learning", "get_learnings", "list_available_tools",
             "record_learnings_batch", "store_contexts_batch",  # Batch operations
             "manage_tool_registry", "add_decision_rule", "get_autonomy_status", "get_execution_stats"  # Tool Autonomy
@@ -1898,7 +1898,7 @@ def get_tools_for_query(query: str, query_class: str = "standard") -> List[str]:
     except Exception:
         # Fallback to known tools if loader not available
         tool_categories["self_modification"]["tools"] = [
-            "write_dynamic_tool", "promote_sandbox_tool", "system_pulse",
+            "write_dynamic_tool", "promote_sandbox_tool",
             "record_learning", "get_learnings", "list_available_tools",
             "record_learnings_batch", "store_contexts_batch",  # Batch operations
             "manage_tool_registry", "add_decision_rule", "get_autonomy_status", "get_execution_stats"  # Tool Autonomy

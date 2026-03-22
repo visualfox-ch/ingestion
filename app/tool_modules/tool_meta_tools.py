@@ -30,11 +30,10 @@ def tool_list_available_tools(category: str = None, search: str = None, **kwargs
     metrics.inc("tool_list_available_tools")
 
     try:
-        # Lazy import to avoid circular dependency
-        from ..tools import TOOL_REGISTRY
+        from .. import tools as core_tools
 
         # Get all registered tools
-        all_tools = list(TOOL_REGISTRY.keys())
+        all_tools = list(core_tools.TOOL_REGISTRY.keys())
 
         # Categorize tools
         categories = {
@@ -51,12 +50,12 @@ def tool_list_available_tools(category: str = None, search: str = None, **kwargs
             "dynamic": [],  # Populated below
             "ollama": ["delegate_ollama_task", "get_ollama_task_status", "ask_ollama", "ollama_python"],
             "python": ["execute_python", "request_python_sandbox"],
-            "self_improvement": ["write_dynamic_tool", "promote_sandbox_tool", "system_pulse"],
+            "self_improvement": ["write_dynamic_tool", "promote_sandbox_tool"],
         }
 
         # Find dynamic tools
         try:
-            from .tool_loader import DynamicToolLoader
+            from ..tool_loader import DynamicToolLoader
             dynamic_tools = list(DynamicToolLoader.get_all_tools().keys())
             categories["dynamic"] = dynamic_tools
         except Exception:
@@ -82,7 +81,7 @@ def tool_list_available_tools(category: str = None, search: str = None, **kwargs
         for tool_name in sorted(filtered):
             # Find description from TOOL_DEFINITIONS
             desc = ""
-            for td in TOOL_DEFINITIONS:
+            for td in core_tools.TOOL_DEFINITIONS:
                 if td.get("name") == tool_name:
                     desc = td.get("description", "")[:100]
                     break
@@ -136,7 +135,7 @@ def tool_manage_tool_registry(
         return {"error": "action is required (enable, disable, update_description, assign_category, get_stats)"}
 
     try:
-        from .services.tool_autonomy import get_tool_autonomy_service
+        from ..services.tool_autonomy import get_tool_autonomy_service
         service = get_tool_autonomy_service()
 
         if action == "enable" and tool_name:
@@ -186,7 +185,7 @@ def tool_get_execution_stats(days: int = 7, limit: int = 20, **kwargs) -> Dict[s
     metrics.inc("tool_get_execution_stats")
 
     try:
-        from .services.tool_autonomy import get_tool_autonomy_service
+        from ..services.tool_autonomy import get_tool_autonomy_service
         service = get_tool_autonomy_service()
         return service.get_tool_execution_stats(days=days, limit=limit)
 
