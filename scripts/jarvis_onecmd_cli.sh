@@ -93,7 +93,7 @@ run_id() {
     jarvis.logs.ingestion) cmd="cd '$OPS_ROOT' && ./jarvis-docker.sh logs ingestion" ;;
     jarvis.restart.ingestion) cmd="cd '$OPS_ROOT' && ./jarvis-docker.sh restart ingestion" ;;
     jarvis.doctor) cmd="cd '$OPS_ROOT' && bash ./scripts/jarvis_onecmd_doctor.sh" ;;
-    jarvis.validate.fast) cmd="cd '$OPS_ROOT' && bash ./scripts/fast-preflight.sh" ;;
+    jarvis.validate.fast) cmd="cd '$OPS_ROOT' && FAST_PREFLIGHT_AUTOSYNC_GENERATED=${FAST_PREFLIGHT_AUTOSYNC_GENERATED:-1} bash ./scripts/fast-preflight.sh" ;;
     jarvis.verify.targeted) cmd="cd '$OPS_ROOT' && ALLOW_NON_NAS=1 TARGETED_TEST_FILES=\"$joined_args\" bash ./scripts/jarvis_pre_deploy_gate.sh" ;;
     jarvis.deploy.smart) cmd="cd '$OPS_ROOT' && bash ./deploy-smart.sh" ;;
     jarvis.confidence) cmd="cd '$OPS_ROOT' && ./jarvis-ssh.sh \"cd /volume1/BRAIN/system/docker && bash ./scripts/jarvis_post_deploy_smoke.sh && bash ./scripts/jarvis_reality_check.sh\"" ;;
