@@ -932,6 +932,7 @@ def run_agent(
         scope = ScopeRef.from_legacy_namespace(namespace)
 
     start_time = time.time()
+    source = "agent"
     timeout_hit = False
     # Read max_rounds from live config (allows runtime changes without deploy)
     max_rounds_env = get_max_tool_rounds()

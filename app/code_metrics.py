@@ -14,9 +14,13 @@ Metrics tracked:
 import subprocess
 import json
 import os
+import logging
 from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
+
+
+logger = logging.getLogger(__name__)
 
 
 class CodeMetricsCollector:
@@ -217,7 +221,7 @@ class CodeMetricsCollector:
                             else:
                                 code_lines += 1
                 except (IOError, UnicodeDecodeError) as e:
-                    logger.debug(f"Skipped file {filepath} due to read error: {e}")
+                    logger.debug(f"Skipped file {py_file} due to read error: {e}")
                     continue
             
             return {

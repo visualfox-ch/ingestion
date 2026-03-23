@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover - depends on runtime image
     psutil = None
 
 from ..db_safety import safe_aggregate_query, safe_list_query, safe_dict_aggregate_query, safe_dict_list_query
-from ..observability import get_logger
+from ..observability import get_logger, log_with_context
 
 logger = get_logger("jarvis.self_validation")
 

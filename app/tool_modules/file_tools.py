@@ -59,6 +59,14 @@ def _read_single_file(file_path: str, max_lines: int) -> Dict[str, Any]:
     return _core_tools()._read_single_file(file_path, max_lines)
 
 
+def _check_write_rate_limits(max_per_minute: int, max_per_hour: int) -> Dict[str, Any]:
+    return _core_tools()._check_write_rate_limits(max_per_minute, max_per_hour)
+
+
+def _requires_write_approval(file_path: str, approval_paths: List[str]) -> bool:
+    return _core_tools()._requires_write_approval(file_path, approval_paths)
+
+
 def tool_read_project_file(file_path: str, max_lines: int = 200, **kwargs) -> Dict[str, Any]:
     """
     Read a file directly from allowed project directories.

@@ -499,7 +499,7 @@ def create_learning_fragment(
                     )
                     return fragment_id
         except Exception as e:
-            log_with_context(logger, "error", "Failed to create learning fragment in database", error=str(e), instruction=text[:100])
+            log_with_context(logger, "error", "Failed to create learning fragment in database", error=str(e), instruction=user_input[:100])
             pass
 
     return None
