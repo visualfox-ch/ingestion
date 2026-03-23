@@ -35,7 +35,7 @@
     {
       "label": "Jarvis: G1 Doctor",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.doctor",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.doctor",
       "detail": "Workspace and command-layer sanity report.",
       "problemMatcher": [],
       "presentation": {
@@ -47,7 +47,7 @@
     {
       "label": "Jarvis: G2 Fast Validate",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.validate.fast",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.validate.fast",
       "detail": "Fast local preflight before a larger verify or deploy step.",
       "group": {
         "kind": "build",
@@ -63,7 +63,7 @@
     {
       "label": "Jarvis: G3 Targeted Verify",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.verify.targeted ${input:jarvisTargetedFiles}",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.verify.targeted ${input:jarvisTargetedFiles}",
       "detail": "Run the pre-deploy gate plus focused checks for selected files.",
       "problemMatcher": [],
       "presentation": {
@@ -75,7 +75,7 @@
     {
       "label": "Jarvis: G3.5 PQ Strict Gate",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.ssh.pq.strict",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.ssh.pq.strict",
       "detail": "Fail fast unless SSH to NAS negotiates PQ-capable KEX.",
       "problemMatcher": [],
       "presentation": {
@@ -87,7 +87,7 @@
     {
       "label": "Jarvis: G4 Smart Deploy",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.deploy.smart",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.deploy.smart",
       "detail": "Preferred deploy path. Auto-selects the safest deploy tier.",
       "problemMatcher": [],
       "presentation": {
@@ -99,7 +99,7 @@
     {
       "label": "Jarvis: G5 Confidence",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.confidence",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.confidence",
       "detail": "Post-deploy smoke checks and reality snapshot on the NAS.",
       "problemMatcher": [],
       "presentation": {
@@ -111,7 +111,7 @@
     {
       "label": "Jarvis: G5.5 CI Pipeline Strict",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.ci.pipeline.status --latest-details --require-success",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.ci.pipeline.status --latest-details --require-success",
       "detail": "Strictly verify latest pipeline-contract run and include job conclusions.",
       "problemMatcher": [],
       "presentation": {
@@ -123,7 +123,7 @@
     {
       "label": "Jarvis: Status",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.status",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.status",
       "detail": "Show the current Jarvis service status on the NAS.",
       "problemMatcher": [],
       "presentation": {
@@ -135,7 +135,7 @@
     {
       "label": "Jarvis: Logs Ingestion",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.logs.ingestion",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.logs.ingestion",
       "detail": "Show ingestion logs from the NAS service.",
       "problemMatcher": [],
       "presentation": {
@@ -147,7 +147,7 @@
     {
       "label": "Jarvis: Restart Ingestion",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.restart.ingestion",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.restart.ingestion",
       "detail": "Restart the ingestion service on the NAS.",
       "problemMatcher": [],
       "presentation": {
@@ -159,7 +159,7 @@
     {
       "label": "Jarvis: PQ Upgrade Preflight",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.ssh.pq.upgrade.preflight",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.ssh.pq.upgrade.preflight",
       "detail": "Capture NAS SSH/package baseline before PQ upgrade work.",
       "problemMatcher": [],
       "presentation": {
@@ -226,7 +226,7 @@
     {
       "label": "Jarvis: G6 Safety Parallel",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.safety.parallel",
+      "command": "./scripts/jarvis_onecmd_cli.sh run jarvis.safety.parallel",
       "detail": "Run guardrails and sandbox safety probes in parallel.",
       "problemMatcher": [],
       "presentation": {
@@ -308,7 +308,7 @@
     {
       "label": "Jarvis: Docs Cleanup (preflight + gate)",
       "type": "shell",
-      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run docs.cleanup.check",
+      "command": "./scripts/jarvis_onecmd_cli.sh run docs.cleanup.check",
       "detail": "Check and repair documentation: frontmatter, invalid domains, duplicates.",
       "problemMatcher": [],
       "presentation": {
