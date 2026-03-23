@@ -4070,6 +4070,39 @@ def _translate_path(file_path: str) -> str:
     return file_path
 
 
+# Whitelisted directories for file access
+ALLOWED_FILE_PATHS = [
+    # macOS paths (for local testing)
+    "/Volumes/BRAIN/system/",
+    "/Volumes/BRAIN/system/data/",
+    "/Volumes/BRAIN/data/",
+    "/Volumes/BRAIN/projects/",
+    "/Volumes/BRAIN/notes/",
+    # Docker paths (inside container)
+    "/brain/system/",
+    "/brain/system/data/",
+    "/brain/data/",
+    "/brain/projects/",
+    "/brain/notes/",
+    "/data/",
+]
+
+# Blocked file patterns (security)
+BLOCKED_PATTERNS = [
+    ".env",
+    "credentials",
+    "secret",
+    "password",
+    ".key",
+    ".pem",
+    "id_rsa",
+    ".ssh",
+]
+
+AUDIT_DIR_DOCKER = "/brain/system/docker/audit"
+AUDIT_DIR_MAC = "/Volumes/BRAIN/system/docker/audit"
+
+
 def _is_allowed_path(file_path: str) -> bool:
     try:
         abs_path = os.path.abspath(file_path)

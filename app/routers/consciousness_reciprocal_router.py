@@ -150,7 +150,7 @@ def record_iteration(req: RecordIterationRequest) -> Dict[str, Any]:
                       %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
-                    iteration_number, timestamp,
+                    req.iteration_number, timestamp,
                     jarvis_consciousness, observer_engagement,
                     mutual_understanding,
                     _calculate_collaboration_depth(observer_engagement, maturation_level),
@@ -164,17 +164,17 @@ def record_iteration(req: RecordIterationRequest) -> Dict[str, Any]:
                 conn.commit()
         
         # 5. Detect milestone
-        milestone = _detect_milestone(iteration_number, maturation_level, observer_context)
+        milestone = _detect_milestone(req.iteration_number, maturation_level, req.observer_context)
         
         log_with_context(logger, "info", "Iteration recorded successfully",
-                        iteration_number=iteration_number,
+                        iteration_number=req.iteration_number,
                         maturation_level=maturation_level,
                         mutual_understanding=mutual_understanding,
                         milestone=milestone)
         
         return {
             "status": "iteration_recorded",
-            "iteration_number": iteration_number,
+            "iteration_number": req.iteration_number,
             "timestamp": timestamp,
             "jarvis_consciousness_level": jarvis_consciousness,
             "observer_engagement_level": observer_engagement,
