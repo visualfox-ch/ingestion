@@ -747,10 +747,10 @@ def get_session_costs(session_id: str, limit: int = 100) -> Dict[str, Any]:
         }
 
     try:
-        # Query traces for this session
-        traces = client.fetch_traces(
+        # Query traces for this session using the correct API
+        traces_response = client.api.trace.list(
             session_id=session_id,
-            limit=limit,
+            limit=min(limit, 100),  # API max is 100
         )
 
         total_input_tokens = 0
@@ -759,32 +759,39 @@ def get_session_costs(session_id: str, limit: int = 100) -> Dict[str, Any]:
         model_breakdown = {}
         trace_count = 0
 
-        for trace in traces.data:
+        traces_data = traces_response.data if hasattr(traces_response, 'data') else traces_response
+        for trace in traces_data:
             trace_count += 1
-            # Aggregate observations (LLM calls) within trace
-            if hasattr(trace, 'observations'):
-                for obs in trace.observations:
-                    if obs.type == 'generation':
-                        model = obs.model or 'unknown'
-                        input_tokens = obs.usage.input or 0 if obs.usage else 0
-                        output_tokens = obs.usage.output or 0 if obs.usage else 0
-                        cost = obs.calculated_total_cost or 0
 
-                        total_input_tokens += input_tokens
-                        total_output_tokens += output_tokens
-                        total_cost += cost
+            # Get trace-level data (defensive for both object and dict)
+            if hasattr(trace, 'id'):
+                input_tokens = _extract_int(getattr(trace, 'input', None))
+                output_tokens = _extract_int(getattr(trace, 'output', None))
+                cost = _extract_float(getattr(trace, 'total_cost', None))
+                model = getattr(trace, 'model', None) or 'unknown'
+            elif isinstance(trace, dict):
+                input_tokens = _extract_int(trace.get('input'))
+                output_tokens = _extract_int(trace.get('output'))
+                cost = _extract_float(trace.get('total_cost'))
+                model = trace.get('model') or 'unknown'
+            else:
+                continue
 
-                        if model not in model_breakdown:
-                            model_breakdown[model] = {
-                                "input_tokens": 0,
-                                "output_tokens": 0,
-                                "cost": 0.0,
-                                "calls": 0,
-                            }
-                        model_breakdown[model]["input_tokens"] += input_tokens
-                        model_breakdown[model]["output_tokens"] += output_tokens
-                        model_breakdown[model]["cost"] += cost
-                        model_breakdown[model]["calls"] += 1
+            total_input_tokens += input_tokens
+            total_output_tokens += output_tokens
+            total_cost += cost
+
+            if model not in model_breakdown:
+                model_breakdown[model] = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cost": 0.0,
+                    "calls": 0,
+                }
+            model_breakdown[model]["input_tokens"] += input_tokens
+            model_breakdown[model]["output_tokens"] += output_tokens
+            model_breakdown[model]["cost"] += cost
+            model_breakdown[model]["calls"] += 1
 
         return {
             "session_id": session_id,
@@ -805,6 +812,33 @@ def get_session_costs(session_id: str, limit: int = 100) -> Dict[str, Any]:
         }
 
 
+def _extract_int(value: Any, default: int = 0) -> int:
+    """Safely extract an integer from various input types."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, dict):
+        # Try common keys for token counts
+        for key in ['total', 'count', 'value', 'input', 'output']:
+            if key in value:
+                return _extract_int(value[key], default)
+    return default
+
+
+def _extract_float(value: Any, default: float = 0.0) -> float:
+    """Safely extract a float from various input types."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        for key in ['total', 'cost', 'value', 'amount']:
+            if key in value:
+                return _extract_float(value[key], default)
+    return default
+
+
 def get_recent_sessions_costs(hours: int = 24, limit: int = 20) -> Dict[str, Any]:
     """
     Get costs for recent sessions.
@@ -821,18 +855,42 @@ def get_recent_sessions_costs(hours: int = 24, limit: int = 20) -> Dict[str, Any
         return {"error": "Langfuse not available"}
 
     try:
-        from datetime import datetime, timedelta
-        from_time = datetime.utcnow() - timedelta(hours=hours)
+        from datetime import datetime, timedelta, timezone
+        from_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        # Fetch recent traces grouped by session
-        traces = client.fetch_traces(
-            limit=500,  # Fetch more to aggregate
+        # Fetch recent traces (API limit is 100)
+        traces_response = client.api.trace.list(
+            limit=100,
             from_timestamp=from_time,
         )
 
+        traces_data = traces_response.data if hasattr(traces_response, 'data') else traces_response
+        if not traces_data:
+            return {
+                "hours": hours,
+                "session_count": 0,
+                "sessions": [],
+            }
+
         sessions = {}
-        for trace in traces.data:
-            sid = trace.session_id or "no-session"
+        for trace in traces_data:
+            # Handle both object and dict responses
+            if hasattr(trace, 'session_id'):
+                sid = getattr(trace, 'session_id', None) or "no-session"
+                ts = getattr(trace, 'timestamp', None)
+                # Use trace-level totals if available - extract safely
+                input_tokens = _extract_int(getattr(trace, 'input', None))
+                output_tokens = _extract_int(getattr(trace, 'output', None))
+                total_cost = _extract_float(getattr(trace, 'total_cost', None))
+            elif isinstance(trace, dict):
+                sid = trace.get('session_id') or "no-session"
+                ts = trace.get('timestamp')
+                input_tokens = _extract_int(trace.get('input'))
+                output_tokens = _extract_int(trace.get('output'))
+                total_cost = _extract_float(trace.get('total_cost'))
+            else:
+                continue
+
             if sid not in sessions:
                 sessions[sid] = {
                     "session_id": sid,
@@ -844,21 +902,14 @@ def get_recent_sessions_costs(hours: int = 24, limit: int = 20) -> Dict[str, Any
                 }
 
             sessions[sid]["traces"] += 1
+            sessions[sid]["total_tokens"] += input_tokens + output_tokens
+            sessions[sid]["total_cost"] += total_cost
 
-            if trace.timestamp:
-                ts = trace.timestamp
+            if ts:
                 if sessions[sid]["first_seen"] is None or ts < sessions[sid]["first_seen"]:
                     sessions[sid]["first_seen"] = ts
                 if sessions[sid]["last_seen"] is None or ts > sessions[sid]["last_seen"]:
                     sessions[sid]["last_seen"] = ts
-
-            if hasattr(trace, 'observations'):
-                for obs in trace.observations:
-                    if obs.type == 'generation':
-                        tokens = (obs.usage.input or 0) + (obs.usage.output or 0) if obs.usage else 0
-                        cost = obs.calculated_total_cost or 0
-                        sessions[sid]["total_tokens"] += tokens
-                        sessions[sid]["total_cost"] += cost
 
         # Sort by cost descending, take top N
         sorted_sessions = sorted(
@@ -870,9 +921,15 @@ def get_recent_sessions_costs(hours: int = 24, limit: int = 20) -> Dict[str, Any
         # Format timestamps
         for s in sorted_sessions:
             if s["first_seen"]:
-                s["first_seen"] = s["first_seen"].isoformat()
+                try:
+                    s["first_seen"] = s["first_seen"].isoformat() if hasattr(s["first_seen"], 'isoformat') else str(s["first_seen"])
+                except Exception:
+                    s["first_seen"] = str(s["first_seen"])
             if s["last_seen"]:
-                s["last_seen"] = s["last_seen"].isoformat()
+                try:
+                    s["last_seen"] = s["last_seen"].isoformat() if hasattr(s["last_seen"], 'isoformat') else str(s["last_seen"])
+                except Exception:
+                    s["last_seen"] = str(s["last_seen"])
             s["total_cost"] = round(s["total_cost"], 4)
 
         return {

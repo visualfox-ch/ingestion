@@ -7,12 +7,17 @@ Liest Konfiguration aus knowledge_sources Tabelle.
 Unterstützt beliebige Domains ohne Code-Änderung.
 """
 
+import asyncio
 import hashlib
 import re
 import uuid
 from pathlib import Path
 from typing import Optional, List
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+
+# Thread pool for non-blocking ingestion (keeps API responsive)
+_ingestion_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ingest_")
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -165,20 +170,6 @@ def ensure_collection(client: QdrantClient, collection_name: str):
 # PostgreSQL-Integration
 # ============================================================================
 
-_VOLATILE_HEADER_RE = re.compile(r'^Fetched-At: .+$', re.MULTILINE)
-
-
-def _stable_content_hash(content: str) -> str:
-    """SHA256 over content with volatile header fields stripped.
-
-    The web_docs snapshot writer embeds a 'Fetched-At:' timestamp on every
-    crawl, making the raw SHA256 differ even when page text is unchanged.
-    Stripping that line before hashing gives a stable fingerprint.
-    """
-    stable = _VOLATILE_HEADER_RE.sub('', content)
-    return hashlib.sha256(stable.encode()).hexdigest()[:32]
-
-
 def upsert_document(
     title: str,
     content: str,
@@ -188,7 +179,7 @@ def upsert_document(
     Fügt Dokument ein oder aktualisiert es (basierend auf title + version).
     Returns: (document_id, is_changed)
     """
-    content_hash = _stable_content_hash(content)
+    content_hash = hashlib.sha256(content.encode()).hexdigest()[:32]
 
     with get_dict_cursor() as cur:
         cur.execute(
@@ -381,70 +372,54 @@ def ingest_knowledge_source(
     }
 
 
-def _source_identity_key(source: KnowledgeSource) -> tuple[str, str]:
-    return (source.title.strip().lower(), source.version.strip())
-
-
 async def ingest_domain(domain: str) -> list[dict]:
-    """Ingestet alle aktiven Sources einer Domain."""
+    """Ingestet alle aktiven Sources einer Domain.
+
+    Runs heavy embedding work in thread pool to keep API responsive.
+    """
     sources = get_active_sources(domain)
     if not sources:
         return [{"status": "error", "message": f"No active sources for domain '{domain}'"}]
 
     qdrant = get_qdrant_client()
     results = []
-    seen_keys: set[tuple[str, str]] = set()
+    loop = asyncio.get_event_loop()
 
     for source in sources:
-        source_key = _source_identity_key(source)
-        if source_key in seen_keys:
-            results.append(
-                {
-                    "status": "skipped",
-                    "title": source.title,
-                    "domain": source.domain,
-                    "subdomain": source.subdomain,
-                    "version": source.version,
-                    "message": "Skipped duplicate source identity (title+version) in same run",
-                }
-            )
-            continue
-
-        seen_keys.add(source_key)
-        result = ingest_knowledge_source(qdrant, source)
+        # Run blocking ingestion in thread pool
+        result = await loop.run_in_executor(
+            _ingestion_executor,
+            ingest_knowledge_source,
+            qdrant,
+            source
+        )
         results.append(result)
 
     return results
 
 
 async def ingest_all_domains() -> dict:
-    """Ingestet alle aktiven Sources aller Domains."""
+    """Ingestet alle aktiven Sources aller Domains.
+
+    Runs heavy embedding work in thread pool to keep API responsive.
+    """
     domains = get_all_domains()
     qdrant = get_qdrant_client()
+    loop = asyncio.get_event_loop()
 
     results = {}
     for domain in domains:
         sources = get_active_sources(domain)
         domain_results = []
-        seen_keys: set[tuple[str, str]] = set()
 
         for source in sources:
-            source_key = _source_identity_key(source)
-            if source_key in seen_keys:
-                domain_results.append(
-                    {
-                        "status": "skipped",
-                        "title": source.title,
-                        "domain": source.domain,
-                        "subdomain": source.subdomain,
-                        "version": source.version,
-                        "message": "Skipped duplicate source identity (title+version) in same run",
-                    }
-                )
-                continue
-
-            seen_keys.add(source_key)
-            result = ingest_knowledge_source(qdrant, source)
+            # Run blocking ingestion in thread pool
+            result = await loop.run_in_executor(
+                _ingestion_executor,
+                ingest_knowledge_source,
+                qdrant,
+                source
+            )
             domain_results.append(result)
 
         results[domain] = domain_results

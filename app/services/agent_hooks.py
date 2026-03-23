@@ -114,9 +114,10 @@ def _load_tools_by_risk_tier() -> Tuple[FrozenSet[str], FrozenSet[str]]:
 def _get_fallback_tools() -> Tuple[FrozenSet[str], FrozenSet[str]]:
     """Fallback hardcoded tools if DB is unavailable."""
     safe = frozenset([
-        "search_knowledge", "get_calendar_events", "get_gmail_messages",
+        "search_knowledge", "search_emails", "search_chats", "get_recent_activity",
+        "get_calendar_events", "get_gmail_messages",
         "recall_facts", "recall_conversation_history", "list_available_tools",
-        "get_self_model", "system_health_check", "analyze_tool_usage",
+        "get_self_model", "system_health_check", "self_validation_pulse", "analyze_tool_usage",
         "introspect_capabilities", "get_execution_stats", "check_guardrails",
         "get_guardrails", "get_config", "get_system_status"
     ])

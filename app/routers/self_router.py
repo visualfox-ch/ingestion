@@ -16,6 +16,7 @@ import logging
 import json
 from datetime import datetime
 
+from ..capability_paths import get_capabilities_json_path
 from ..errors import JarvisException, ErrorCode
 from ..observability import get_logger, log_with_context
 from ..tracing import get_current_user_id
@@ -491,9 +492,9 @@ async def jarvis_self_capabilities(request: Request = None):
         from ..state import global_state
         
         # 1. Read CAPABILITIES.json
-        capabilities_path = Path("/brain/system/docs/CAPABILITIES.json")
+        capabilities_path = get_capabilities_json_path()
         if capabilities_path.exists():
-            with open(capabilities_path) as f:
+            with capabilities_path.open("r", encoding="utf-8") as f:
                 capabilities = json.load(f)
         else:
             capabilities = {"error": "CAPABILITIES.json not found"}

@@ -3,6 +3,7 @@ API Authentication for Jarvis
 
 Simple API-Key based authentication with logging for failed attempts.
 """
+import secrets
 from fastapi import Request, HTTPException, status
 from fastapi.security import APIKeyHeader
 from typing import Optional
@@ -61,8 +62,8 @@ def validate_api_key(api_key: Optional[str], request: Request) -> bool:
             headers={"WWW-Authenticate": "ApiKey"}
         )
 
-    # Invalid key
-    if api_key != config.API_KEY:
+    # Invalid key (constant-time comparison to prevent timing attacks)
+    if not secrets.compare_digest(api_key, config.API_KEY):
         log_with_context(
             logger, "warning", "Auth failed: Invalid API key",
             client_ip=client_ip,
@@ -87,13 +88,9 @@ async def auth_dependency(request: Request, api_key: Optional[str] = None):
         def endpoint(auth: bool = Depends(auth_dependency)):
             ...
     """
-    # Try to get API key from header first
+    # Get API key from header only (query-param auth removed for security)
     if api_key is None:
         api_key = request.headers.get(config.API_KEY_HEADER)
-
-    # Also check query parameter as fallback (for simple testing)
-    if api_key is None:
-        api_key = request.query_params.get("api_key")
 
     return validate_api_key(api_key, request)
 

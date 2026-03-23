@@ -10,14 +10,20 @@ Extracted from main.py - Phase 21 Code Writing Tools:
 - Repo graph queries
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from typing import Dict, Any, Optional
 
 from ..observability import get_logger
 from ..services import repo_graph_service as repo_graph_module
+from ..auth import auth_dependency
 
 logger = get_logger("jarvis.code")
-router = APIRouter(prefix="/code", tags=["code"])
+# Code modification endpoints require authentication
+router = APIRouter(
+    prefix="/code",
+    tags=["code"],
+    dependencies=[Depends(auth_dependency)]
+)
 
 
 # =============================================================================

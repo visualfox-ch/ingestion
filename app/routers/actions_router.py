@@ -10,14 +10,20 @@ Extracted from main.py - Action Approval System endpoints:
 - Check action permissions
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 
 from ..observability import get_logger
+from ..auth import auth_dependency
 
 logger = get_logger("jarvis.actions")
-router = APIRouter(prefix="/actions", tags=["actions"])
+# Action approval endpoints require authentication
+router = APIRouter(
+    prefix="/actions",
+    tags=["actions"],
+    dependencies=[Depends(auth_dependency)]
+)
 
 
 # =============================================================================

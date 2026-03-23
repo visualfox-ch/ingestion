@@ -201,56 +201,28 @@ WRITE_APPROVAL_PATHS = [p.strip() for p in os.getenv(
     "/brain/system/docker/docker-compose.yml,/brain/system/ingestion/app/agent.py"
 ).split(",") if p.strip()]
 
+# Minimal public endpoints (T-015 hardening: reduced from 53 to 15)
+# All other endpoints require API key authentication
 PUBLIC_ENDPOINTS = [
+    # Health & readiness (required for k8s probes)
     "/health",
     "/health/quick",
     "/health/detailed",
     "/livez",
     "/readyz",
+    # Auth status (allows clients to check if auth is enabled)
     "/auth/status",
+    # API documentation
     "/openapi.json",
     "/docs",
     "/redoc",
-    "/metrics/prometheus",  # Phase 16.1: Prometheus scraping
-    "/optimize/analyze",  # Phase 16.2: Optimization recommendations (public)
-    "/optimize/latency",
-    "/optimize/reliability",
-    "/optimize/resources",
-    "/optimize/quality",
-    "/coach/optimize",  # Phase 16.2: Optimization coaching (public)
-    "/coach/performance",
-    "/coach/reliability",
-    "/coach/resources",
-    "/coach/learning",
-    "/info/capabilities",  # Phase 16.2: Jarvis capabilities info
-    "/info/metrics",  # Phase 16.2: Metrics summary
-    "/info/observability",  # Observability as product feature
-    "/notify/phase-deployment",  # Phase 16.2: Deployment notifications
-    "/stresstest/phase/complete",  # Stresstest phase transition + Langfuse flush
-    "/remediate/pending",  # Phase 16.3: Pending remediation approvals
-    "/remediate/recent",  # Phase 16.3: Recent remediation history
-    "/remediate/stats",  # Phase 16.3: Remediation success rates
-    "/dashboard",  # Phase 16.3B: Dashboard UI
-    "/dashboard/api/approve",  # Phase 16.3B: Dashboard approval proxy
-    "/dashboard/api/reject",  # Phase 16.3B: Dashboard rejection proxy
-    "/static",  # Phase 16.3B: Static files for dashboard
-    "/agent/uncertainty/latest",  # Phase 18.2: Uncertainty UI snapshot
-    "/notifications/pending",  # Phase 16.4B: Pending notifications
-    "/notifications/stats",  # Phase 16.4B: Notification statistics
-    "/user/notification-preferences",  # Phase 16.4B: User notification settings
-    "/memory/timeline",  # Phase 16.4C: Personal timeline
-    "/memory/preferences",  # Phase 16.4C: Learned preferences
-    "/memory/preferences/confirm",  # Phase 16.4D: Preference calibration
-    "/memory/preferences/contradict",  # Phase 16.4D: Preference calibration
-    "/memory/preferences/decay",  # Phase 16.4D: Preference decay
-    "/memory/patterns",  # Phase 16.4C: Detected patterns
-    "/memory/patterns/detect",  # Phase 16.4C: Trigger pattern detection
-    "/memory/quality",  # Phase 16.4C: Interaction quality
-    "/memory/vip",  # Phase 16.4C: VIP contacts
-    "/feedback/summary",  # Phase 16.4A: Feedback summary
-    "/feedback/recent",  # Phase 16.4A: Recent feedback
-    "/feedback/decisions",  # Phase 16.4A: Decision history
-    "/feedback/outcomes/stats",  # Phase 16.4A: Outcome statistics
-    "/feedback/improvements",  # Phase 16.4A: Self-improvements
-    "/flags/check",  # Phase 18.3: Public flag check for clients
+    # Metrics (Prometheus scraping)
+    "/metrics/prometheus",
+    # Dashboard UI (static assets only, NOT the approve/reject API!)
+    "/dashboard",
+    "/static",
+    # Public info (read-only observability)
+    "/info/capabilities",
+    "/info/metrics",
+    "/info/observability",
 ]

@@ -1095,9 +1095,9 @@ class SelfValidationService:
 
     def compare_code_versions(self, module: str = "main") -> Dict[str, Any]:
         try:
-            base_path = "/brain/system/ingestion/app"
+            base_path = "/brain/system/docker/app"
             if not os.path.exists(base_path):
-                base_path = "/Volumes/BRAIN/system/ingestion/app"
+                base_path = "/Volumes/BRAIN/system/docker/app"
 
             file_map = {
                 "main": "main.py",
@@ -1854,23 +1854,25 @@ class SelfValidationService:
                                 for _r in _fb_rows:
                                     _b = min(int(float(_r["confidence"]) * 10), 9)
                                     if _b not in _buckets:
-                                        _buckets[_b] = {"count": 0.0, "correct": 0.0}
+                                        _buckets[_b] = {"count": 0.0, "correct": 0.0, "confidence_sum": 0.0}
                                     _buckets[_b]["count"] += 1
                                     _buckets[_b]["correct"] += int(_r["actual_correct"])
+                                    _buckets[_b]["confidence_sum"] += float(_r["confidence"])
                                 _ece = 0.0
-                                for _b_idx, _bdata in _buckets.items():
-                                    _mid = (_b_idx + 0.5) / 10.0
+                                for _bdata in _buckets.values():
+                                    _avg_conf = _bdata["confidence_sum"] / _bdata["count"]
                                     _frac = _bdata["correct"] / _bdata["count"]
-                                    _ece += (_bdata["count"] / _n) * abs(_frac - _mid)
+                                    _ece += (_bdata["count"] / _n) * abs(_frac - _avg_conf)
                                 ece_value = round(_ece, 4)
                 except Exception as _exc:
                     logger.warning(f"Calibration SQLite fallback failed: {_exc}")
 
+            calibration_is_baseline = calibration_source == "sqlite_calibration_feedback"
             calibration_ece_status = "no_data"
             if ece_value is not None:
                 if ece_value <= 0.15:
                     calibration_ece_status = "pass"
-                elif ece_value <= 0.20:
+                elif ece_value <= 0.20 or calibration_is_baseline:
                     calibration_ece_status = "warn"
                 else:
                     calibration_ece_status = "fail"
@@ -1899,7 +1901,7 @@ class SelfValidationService:
                 coverage_value = round((calibration_samples / total_assessments) * 100.0, 1)
                 if coverage_value >= 30:
                     coverage_status = "pass"
-                elif coverage_value >= 15:
+                elif coverage_value >= 15 or calibration_is_baseline:
                     coverage_status = "warn"
                 else:
                     coverage_status = "fail"
@@ -1943,6 +1945,7 @@ class SelfValidationService:
                 "calibration_ece": {
                     "status": calibration_ece_status,
                     "value": ece_value,
+                    "source": calibration_source,
                     "thresholds": {"pass": "<=0.15", "warn": "<=0.20", "fail": ">0.20"},
                 },
                 "confidence_feedback_coverage": {

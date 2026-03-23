@@ -32,6 +32,8 @@ class TelegramAlertRequest(BaseModel):
     message: str
     level: str = "info"
     buttons: list | None = None  # Optional inline keyboard buttons
+    chat_id: str | int | None = None
+    thread_id: str | int | None = None
 
 
 @router.post("/telegram/send_alert")
@@ -41,7 +43,13 @@ def send_telegram_alert(req: TelegramAlertRequest):
     Used by n8n workflows for proactive notifications.
     """
     from ..telegram_bot import send_alert
-    success = send_alert(req.message, level=req.level, buttons=req.buttons)
+    success = send_alert(
+        req.message,
+        level=req.level,
+        buttons=req.buttons,
+        chat_id=req.chat_id,
+        thread_id=req.thread_id,
+    )
     return {"success": success, "level": req.level}
 
 
@@ -98,6 +106,8 @@ def send_followup_telegram_reminder(req: FollowupReminderRequest):
 class TelegramSendRequest(BaseModel):
     message: str
     user_id: int | None = None  # None = broadcast to all
+    chat_id: str | int | None = None
+    thread_id: str | int | None = None
     parse_mode: str = "Markdown"
     buttons: list[list[dict]] | None = None
     silent: bool = False
@@ -113,12 +123,15 @@ def send_telegram_message(req: TelegramSendRequest):
     if not TELEGRAM_TOKEN:
         raise HTTPException(status_code=503, detail="Telegram bot not configured")
 
-    if not ALLOWED_USER_IDS and not req.user_id:
+    if not ALLOWED_USER_IDS and not req.user_id and not req.chat_id:
         raise HTTPException(status_code=400, detail="No recipients configured")
 
-    recipients = [str(req.user_id)] if req.user_id else ALLOWED_USER_IDS
+    if req.thread_id is not None and req.chat_id is None:
+        raise HTTPException(status_code=400, detail="thread_id requires explicit chat_id")
 
-    if req.user_id and str(req.user_id) not in ALLOWED_USER_IDS:
+    recipients = [str(req.chat_id)] if req.chat_id is not None else [str(req.user_id)] if req.user_id else ALLOWED_USER_IDS
+
+    if req.user_id and req.chat_id is None and str(req.user_id) not in ALLOWED_USER_IDS:
         raise HTTPException(status_code=403, detail="User not in allowed list")
 
     results = []
@@ -130,6 +143,9 @@ def send_telegram_message(req: TelegramSendRequest):
                 "parse_mode": req.parse_mode,
                 "disable_notification": req.silent
             }
+
+            if req.thread_id is not None:
+                payload["message_thread_id"] = int(req.thread_id)
 
             if req.buttons:
                 payload["reply_markup"] = {"inline_keyboard": req.buttons}
@@ -166,6 +182,6 @@ def send_telegram_message(req: TelegramSendRequest):
         "sent_to": success_count,
         "failed": len(results) - success_count,
         "total_recipients": len(recipients),
-        "broadcast": req.user_id is None,
+        "broadcast": req.user_id is None and req.chat_id is None,
         "details": results
     }

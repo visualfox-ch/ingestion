@@ -1759,18 +1759,21 @@ async def refresh_capabilities(update: Update, context: ContextTypes.DEFAULT_TYP
         tools = data.get("data", {}).get("tools", [])
         monitoring = data.get("data", {}).get("monitoring_endpoints", [])
         sources = data.get("sources", {})
+        capabilities_json_path = sources.get("capabilities_json", {}).get("path", "docs/CAPABILITIES.json")
+        capabilities_status_path = sources.get("capabilities_status", {}).get("path", "/brain/system/docker/CAPABILITIES_STATUS.md")
+        jarvis_self_path = sources.get("jarvis_self", {}).get("path", "/brain/system/policies/JARVIS_SELF.md")
         
         # 1. Version
         response += f"## 1. Version: {version}\n"
-        response += "Quelle: /brain/system/docs/CAPABILITIES.json\n"
+        response += f"Quelle: {capabilities_json_path}\n"
         response += f"• Build: {build_ts}\n\n"
 
         # 2. File System Access (kanonische Dateien)
         response += "## 2. File System Access\n"
         response += "Kanonische System-Dateien (direkt gelesen):\n"
-        response += f"• /brain/system/docker/CAPABILITIES_STATUS.md — {'✅' if sources.get('capabilities_status', {}).get('exists') else '❌'}\n"
-        response += f"• /brain/system/docs/CAPABILITIES.json — {'✅' if sources.get('capabilities_json', {}).get('exists') else '❌'}\n"
-        response += f"• /brain/system/policies/JARVIS_SELF.md — {'✅' if sources.get('jarvis_self', {}).get('exists') else '❌'}\n\n"
+        response += f"• {capabilities_status_path} — {'✅' if sources.get('capabilities_status', {}).get('exists') else '❌'}\n"
+        response += f"• {capabilities_json_path} — {'✅' if sources.get('capabilities_json', {}).get('exists') else '❌'}\n"
+        response += f"• {jarvis_self_path} — {'✅' if sources.get('jarvis_self', {}).get('exists') else '❌'}\n\n"
         
         # 3. Neue Features (aus CAPABILITIES_STATUS.md wenn vorhanden)
         caps_status = sources.get("capabilities_status", {})
@@ -3020,7 +3023,9 @@ def send_alert(
     message: str,
     level: str = "warning",
     buttons: List[List[Dict]] = None,
-    bypass_limit: bool = False
+    bypass_limit: bool = False,
+    chat_id: str | int | None = None,
+    thread_id: str | int | None = None,
 ) -> bool:
     """
     Send an alert message to all allowed Telegram users.
@@ -3035,6 +3040,8 @@ def send_alert(
                  Each row is a list of dicts with 'text' and 'callback_data'
                  Example: [[{"text": "✓ Ack", "callback_data": "alert:ack:123"}]]
         bypass_limit: Skip daily limit check (for forced notifications)
+        chat_id: Optional explicit target chat ID (group or user)
+        thread_id: Optional Telegram topic/thread ID for forum groups
 
     Returns:
         True if at least one message was sent successfully
@@ -3050,7 +3057,7 @@ def send_alert(
         log_with_context(logger, "warning", "Cannot send alert: token not set")
         return False
 
-    if not ALLOWED_USER_IDS:
+    if not ALLOWED_USER_IDS and not chat_id:
         log_with_context(logger, "warning", "Cannot send alert: no allowed users configured")
         return False
 
@@ -3074,15 +3081,20 @@ def send_alert(
         "parse_mode": "Markdown"
     }
 
+    if thread_id is not None and chat_id is not None:
+        payload["message_thread_id"] = int(thread_id)
+
     # Add inline keyboard if buttons provided
     if buttons:
         payload["reply_markup"] = {
             "inline_keyboard": buttons
         }
 
+    recipients = [str(chat_id)] if chat_id is not None else ALLOWED_USER_IDS
+
     success = False
     import time
-    for user_id in ALLOWED_USER_IDS:
+    for user_id in recipients:
         max_attempts = 3
         base_backoff_s = 0.5
         max_sleep_s = 5.0

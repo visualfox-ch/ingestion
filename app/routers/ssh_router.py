@@ -15,9 +15,15 @@ from typing import Any
 
 from ..observability import get_logger
 from ..rate_limit import rate_limit_dependency
+from ..auth import auth_dependency
 
 logger = get_logger("jarvis.ssh")
-router = APIRouter(prefix="/ssh", tags=["ssh"])
+# SSH endpoints require authentication (critical security surface)
+router = APIRouter(
+    prefix="/ssh",
+    tags=["ssh"],
+    dependencies=[Depends(auth_dependency)]
+)
 
 
 # =============================================================================

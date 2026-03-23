@@ -12,6 +12,7 @@ import requests
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
+from ..capability_paths import get_capabilities_json_path
 from ..observability import get_logger, log_with_context, get_recent_log_events
 from ..ssh_client import get_container_logs
 from ..auth import auth_dependency
@@ -985,7 +986,7 @@ def get_capabilities(request: Request, _=Depends(auth_dependency)) -> Dict[str, 
     try:
         # Read canonical sources directly from filesystem
         capabilities_status_path = Path("/brain/system/docker/CAPABILITIES_STATUS.md")
-        capabilities_json_path = Path("/brain/system/docs/CAPABILITIES.json")
+        capabilities_json_path = get_capabilities_json_path()
         jarvis_self_path = Path("/brain/system/policies/JARVIS_SELF.md")
         
         result = {

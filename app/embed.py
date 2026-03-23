@@ -1,8 +1,13 @@
 from sentence_transformers import SentenceTransformer
 from .observability import embedding_cache, metrics, get_logger, log_with_context
 import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 logger = get_logger("jarvis.embed")
+
+# Thread pool for non-blocking embedding computation
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed_")
 
 # BGE-small: 384 dims, better quality than MiniLM, same speed
 # See: https://huggingface.co/BAAI/bge-small-en-v1.5
@@ -78,3 +83,15 @@ def embed_texts(texts):
     )
 
     return results
+
+
+async def embed_texts_async(texts):
+    """Async version of embed_texts - runs in thread pool to avoid blocking API.
+
+    Use this for heavy ingestion jobs to keep the API responsive.
+    """
+    if not texts:
+        return []
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, embed_texts, texts)

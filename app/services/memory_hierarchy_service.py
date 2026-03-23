@@ -53,7 +53,7 @@ class MemoryHierarchyService:
 
     def _get_cursor(self):
         """Get database cursor."""
-        from app.services.db_client import get_cursor
+        from app.db_client import get_cursor
         return get_cursor()
 
     def _load_tiers(self):
