@@ -5,6 +5,7 @@ Simple Retrieval Evaluation Harness
 Runs search_knowledge on a fixed query set and computes basic hit-rate
 against expected source_path substrings.
 """
+import argparse
 import json
 import os
 from datetime import datetime
@@ -52,7 +53,18 @@ def _hit(results: List[Dict[str, Any]], expect: List[str]) -> bool:
     return False
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--print-json",
+        action="store_true",
+        help="Also print the full evaluation report as JSON to stdout.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
     queries = _load_queries()
     results = []
     hits = 0
@@ -97,7 +109,13 @@ def main() -> None:
     except Exception:
         pass
 
-    print(json.dumps(report, indent=2))
+    print("Retrieval eval complete")
+    print(f"  output: {EVAL_PATH}")
+    print(f"  queries: {summary['queries_total']}")
+    print(f"  hit_rate: {summary['hit_rate']:.3f}")
+
+    if args.print_json:
+        print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":

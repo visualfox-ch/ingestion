@@ -18,9 +18,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 CAP_FILE = ROOT / "CAPABILITIES_STATUS.md"
 TOOLS_FILE = ROOT / "app" / "tools.py"
+TOOL_MODULES_DIR = ROOT / "app" / "tool_modules"
 MAIN_FILE = ROOT / "app" / "main.py"
-CONFIG_FILE = ROOT / "app" / "jarvis_config.py"
+CONFIG_FILE = ROOT / "app" / "config.py"
+ROUTERS_DIR = ROOT / "app" / "routers"
 CONNECTORS_DIR = ROOT / "app" / "connectors"
+CAPABILITIES_JSON = ROOT / "docs" / "CAPABILITIES.json"
 
 AUTO_START = "<!-- AUTO-INVENTORY START -->"
 AUTO_END = "<!-- AUTO-INVENTORY END -->"
@@ -42,11 +45,36 @@ def _read_text(path: Path) -> str:
 
 
 def _count_tools() -> int:
-    text = _read_text(TOOLS_FILE)
-    return len(re.findall(r"^def tool_", text, flags=re.MULTILINE))
+    if CAPABILITIES_JSON.exists():
+        import json
+
+        payload = json.loads(CAPABILITIES_JSON.read_text(encoding="utf-8"))
+        return len(payload.get("tools", []))
+
+    count = len(re.findall(r"^def tool_", _read_text(TOOLS_FILE), flags=re.MULTILINE))
+    if TOOL_MODULES_DIR.exists():
+        for path in TOOL_MODULES_DIR.glob("*.py"):
+            if path.name == "__init__.py":
+                continue
+            count += len(re.findall(r"^def tool_", _read_text(path), flags=re.MULTILINE))
+    return count
 
 
 def _endpoint_inventory() -> tuple[int, dict[str, int]]:
+    if CAPABILITIES_JSON.exists():
+        import json
+
+        payload = json.loads(CAPABILITIES_JSON.read_text(encoding="utf-8"))
+        endpoints = {
+            (ep.get("method", "").lower(), ep.get("path", ""))
+            for ep in payload.get("endpoints", [])
+            if ep.get("method") and ep.get("path")
+        }
+        by_method: dict[str, int] = {}
+        for method, _path in endpoints:
+            by_method[method] = by_method.get(method, 0) + 1
+        return len(endpoints), dict(sorted(by_method.items()))
+
     text = _read_text(MAIN_FILE)
     matches = re.findall(
         r"@app\.(get|post|put|delete|patch|options|head)\(\"([^\"]+)\"",
@@ -54,6 +82,15 @@ def _endpoint_inventory() -> tuple[int, dict[str, int]]:
         flags=re.IGNORECASE,
     )
     endpoints = {(m.lower(), p) for m, p in matches}
+    if ROUTERS_DIR.exists():
+        for path in ROUTERS_DIR.glob("*.py"):
+            router_text = _read_text(path)
+            matches = re.findall(
+                r"@router\.(get|post|put|delete|patch|options|head)\(\"([^\"]+)\"",
+                router_text,
+                flags=re.IGNORECASE,
+            )
+            endpoints.update((m.lower(), p) for m, p in matches)
     by_method: dict[str, int] = {}
     for method, _path in endpoints:
         by_method[method] = by_method.get(method, 0) + 1

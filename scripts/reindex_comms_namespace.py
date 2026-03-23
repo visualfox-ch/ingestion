@@ -228,6 +228,11 @@ def main():
     parser.add_argument("--collection", default=COMMS_COLLECTION)
     parser.add_argument("--sources", default="private,work_projektil,work_visualfox")
     parser.add_argument("--limit-files", type=int, default=0, help="Limit files per source (0 = no limit)")
+    parser.add_argument(
+        "--print-json",
+        action="store_true",
+        help="Also print the final totals as JSON to stdout.",
+    )
     args = parser.parse_args()
 
     sources = [s.strip() for s in args.sources.split(",") if s.strip()]
@@ -300,7 +305,17 @@ def main():
         totals["gchat_inbox_windows"] += gchat_inbox_stats["windows"]
 
     print("\n✅ Comms reindex complete")
-    print(json.dumps(totals, indent=2))
+    print(f"  wa_files: {totals['wa_files']}")
+    print(f"  wa_windows: {totals['wa_windows']}")
+    print(f"  gchat_files: {totals['gchat_files']}")
+    print(f"  gchat_windows: {totals['gchat_windows']}")
+    print(f"  wa_inbox_files: {totals['wa_inbox_files']}")
+    print(f"  wa_inbox_windows: {totals['wa_inbox_windows']}")
+    print(f"  gchat_inbox_files: {totals['gchat_inbox_files']}")
+    print(f"  gchat_inbox_windows: {totals['gchat_inbox_windows']}")
+
+    if args.print_json:
+        print(json.dumps(totals, indent=2))
 
 
 if __name__ == "__main__":
