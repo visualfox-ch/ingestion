@@ -18,8 +18,8 @@ def tool_system_health_check(**kwargs) -> Dict[str, Any]:
     metrics.inc("tool_system_health_check")
 
     try:
-        from .routers import health_router
-        return health_router.health_check()
+        from ..routers.health_router import health_check
+        return health_check()
     except Exception as e:
         log_with_context(logger, "error", "System health check failed", error=str(e))
         return {"error": str(e)}
@@ -31,7 +31,7 @@ def tool_memory_diagnostics(**kwargs) -> Dict[str, Any]:
     metrics.inc("tool_memory_diagnostics")
 
     try:
-        from .services.self_validation_service import get_self_validation_service
+        from ..services.self_validation_service import get_self_validation_service
 
         service = get_self_validation_service()
         return service.memory_diagnostics()
@@ -46,7 +46,7 @@ def tool_context_window_analysis(user_id: int = None, **kwargs) -> Dict[str, Any
     metrics.inc("tool_context_window_analysis")
 
     try:
-        from .services.self_validation_service import get_self_validation_service
+        from ..services.self_validation_service import get_self_validation_service
 
         service = get_self_validation_service()
         return service.context_window_analysis(user_id=user_id)
@@ -61,7 +61,7 @@ def tool_benchmark_tool_calls(hours: int = 24, **kwargs) -> Dict[str, Any]:
     metrics.inc("tool_benchmark_tool_calls")
 
     try:
-        from .services.self_validation_service import get_self_validation_service
+        from ..services.self_validation_service import get_self_validation_service
 
         service = get_self_validation_service()
         return service.benchmark_tool_calls(hours=hours)
@@ -76,7 +76,7 @@ def tool_compare_code_versions(module: str = "main", **kwargs) -> Dict[str, Any]
     metrics.inc("tool_compare_code_versions")
 
     try:
-        from .services.self_validation_service import get_self_validation_service
+        from ..services.self_validation_service import get_self_validation_service
 
         service = get_self_validation_service()
         return service.compare_code_versions(module=module)
@@ -91,7 +91,7 @@ def tool_conversation_continuity_test(user_id: int, **kwargs) -> Dict[str, Any]:
     metrics.inc("tool_conversation_continuity_test")
 
     try:
-        from .services.self_validation_service import get_self_validation_service
+        from ..services.self_validation_service import get_self_validation_service
 
         service = get_self_validation_service()
         return service.conversation_continuity_test(user_id=user_id)
@@ -106,7 +106,7 @@ def tool_response_quality_metrics(hours: int = 168, **kwargs) -> Dict[str, Any]:
     metrics.inc("tool_response_quality_metrics")
 
     try:
-        from .services.self_validation_service import get_self_validation_service
+        from ..services.self_validation_service import get_self_validation_service
 
         service = get_self_validation_service()
         return service.response_quality_metrics(hours=hours)
@@ -121,12 +121,11 @@ def tool_proactivity_score(user_id: int = None, hours: int = 168, **kwargs) -> D
     metrics.inc("tool_proactivity_score")
 
     try:
-        from .services.self_validation_service import get_self_validation_service
+        from ..services.self_validation_service import get_self_validation_service
 
         service = get_self_validation_service()
         return service.proactivity_score(user_id=user_id, hours=hours)
     except Exception as e:
         log_with_context(logger, "error", "Proactivity score failed", error=str(e))
         return {"status": "error", "error": str(e)}
-
 

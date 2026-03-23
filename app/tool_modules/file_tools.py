@@ -8,7 +8,15 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import os
 import json
+import glob
+import shutil
+import difflib
 
+from ..capability_paths import (
+    get_capability_catalog_path,
+    get_capabilities_json_path,
+    get_context_policy_path,
+)
 from ..observability import get_logger, log_with_context, metrics
 from ..errors import JarvisException, ErrorCode, internal_error
 
@@ -16,6 +24,39 @@ logger = get_logger("jarvis.tools.file")
 
 # Constants
 BRAIN_PATH = os.getenv("BRAIN_PATH", "/brain")
+
+
+def _core_tools():
+    from .. import tools as core_tools
+    return core_tools
+
+
+def _allowed_file_paths() -> List[str]:
+    return _core_tools().ALLOWED_FILE_PATHS
+
+
+def _translate_path(file_path: str) -> str:
+    return _core_tools()._translate_path(file_path)
+
+
+def _is_allowed_path(file_path: str) -> bool:
+    return _core_tools()._is_allowed_path(file_path)
+
+
+def _is_blocked_path(file_path: str) -> bool:
+    return _core_tools()._is_blocked_path(file_path)
+
+
+def _get_audit_dir(file_path: str) -> str:
+    return _core_tools()._get_audit_dir(file_path)
+
+
+def _hash_content(content: str) -> str:
+    return _core_tools()._hash_content(content)
+
+
+def _read_single_file(file_path: str, max_lines: int) -> Dict[str, Any]:
+    return _core_tools()._read_single_file(file_path, max_lines)
 
 
 def tool_read_project_file(file_path: str, max_lines: int = 200, **kwargs) -> Dict[str, Any]:
@@ -40,7 +81,7 @@ def tool_read_project_file(file_path: str, max_lines: int = 200, **kwargs) -> Di
         return {
             "error": "Zugriff verweigert",
             "reason": "Pfad nicht in erlaubten Verzeichnissen",
-            "allowed_paths": ALLOWED_FILE_PATHS
+            "allowed_paths": _allowed_file_paths()
         }
 
     # Security check: block sensitive files
@@ -137,9 +178,9 @@ def tool_read_my_source_files(
     metrics.inc("tool_read_my_source_files")
 
     file_map = {
-        "capability_catalog": "/brain/system/docs/CAPABILITY_CATALOG.md",
-        "context_policy": "/brain/system/docs/CONTEXT_POLICY.md",
-        "capabilities_json": "/brain/system/docs/CAPABILITIES.json",
+        "capability_catalog": str(get_capability_catalog_path()),
+        "context_policy": str(get_context_policy_path()),
+        "capabilities_json": str(get_capabilities_json_path()),
         "jarvis_self": "/brain/system/policies/JARVIS_SELF.md",
     }
 
@@ -201,7 +242,7 @@ def tool_write_project_file(
         return {
             "error": "Zugriff verweigert",
             "reason": "Pfad nicht in erlaubten Verzeichnissen",
-            "allowed_paths": ALLOWED_FILE_PATHS
+            "allowed_paths": _allowed_file_paths()
         }
 
     # Security check: block sensitive files
@@ -317,7 +358,7 @@ def tool_read_own_code(
     metrics.inc("tool_read_own_code")
 
     # Map of available source files
-    source_dir = "/brain/system/ingestion/app"
+    source_dir = "/brain/system/docker/app"
 
     # Validate file name (security)
     if not file_name.endswith(".py"):
@@ -440,7 +481,7 @@ def tool_list_own_source_files(
     log_with_context(logger, "info", "Tool: list_own_source_files")
     metrics.inc("tool_list_own_source_files")
 
-    source_dir = "/brain/system/ingestion/app"
+    source_dir = "/brain/system/docker/app"
     files = []
 
     try:
@@ -495,4 +536,3 @@ def tool_list_own_source_files(
 
 
 # ============ Self-Validation Tools (Phase 19) ============
-

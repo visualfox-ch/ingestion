@@ -16,7 +16,7 @@ logger = get_logger("jarvis.tools.decision")
 def tool_record_decision_outcome(**kwargs) -> Dict[str, Any]:
     """Record feedback/outcome for a prior decision_id."""
     try:
-        from .cross_session_learner import cross_session_learner
+        from ..cross_session_learner import cross_session_learner
 
         decision_id = kwargs.get("decision_id")
         outcome = kwargs.get("outcome")
@@ -81,7 +81,7 @@ def tool_add_decision_rule(
         return {"error": "name, condition_type, condition_value, action_type, action_value are required"}
 
     try:
-        from .services.tool_autonomy import get_tool_autonomy_service
+        from ..services.tool_autonomy import get_tool_autonomy_service
         service = get_tool_autonomy_service()
 
         return service.add_decision_rule(
@@ -112,7 +112,7 @@ def tool_get_autonomy_status(**kwargs) -> Dict[str, Any]:
     metrics.inc("tool_get_autonomy_status")
 
     try:
-        from .services.tool_autonomy import get_tool_autonomy_service
+        from ..services.tool_autonomy import get_tool_autonomy_service
         service = get_tool_autonomy_service()
 
         tools = service.get_enabled_tools()
@@ -139,11 +139,11 @@ def tool_get_autonomy_status(**kwargs) -> Dict[str, Any]:
     except Exception as e:
         log_with_context(logger, "error", "get_autonomy_status failed", error=str(e))
         # Return basic info even if DB fails
+        from .. import tools as core_tools
         return {
             "status": "code_fallback",
-            "tools": {"total_enabled": len(TOOL_REGISTRY)},
+            "tools": {"total_enabled": len(core_tools.TOOL_REGISTRY)},
             "error": str(e),
             "hint": "Database not available, using code-defined tools"
         }
-
 

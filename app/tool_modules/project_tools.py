@@ -13,17 +13,26 @@ from ..errors import JarvisException, ErrorCode, internal_error
 logger = get_logger("jarvis.tools.project")
 
 
+def _get_current_user_id() -> Any:
+    try:
+        from .. import tools as core_tools
+        return getattr(core_tools, "_current_user_id", None)
+    except Exception:
+        return None
+
+
 def tool_add_project(name: str, description: str = "", priority: int = 2, **kwargs) -> Dict[str, Any]:
     """Add a new project"""
     log_with_context(logger, "info", "Tool: add_project", name=name, priority=priority)
     metrics.inc("tool_add_project")
 
-    if not _current_user_id:
+    current_user_id = _get_current_user_id()
+    if not current_user_id:
         return {"error": "No user context available"}
 
     try:
-        from . import projects
-        return projects.tool_add_project(_current_user_id, name, description, priority)
+        from .. import projects
+        return projects.tool_add_project(current_user_id, name, description, priority)
     except Exception as e:
         log_with_context(logger, "error", "Add project failed", error=str(e))
         return {"error": str(e)}
@@ -34,12 +43,13 @@ def tool_list_projects(**kwargs) -> Dict[str, Any]:
     log_with_context(logger, "info", "Tool: list_projects")
     metrics.inc("tool_list_projects")
 
-    if not _current_user_id:
+    current_user_id = _get_current_user_id()
+    if not current_user_id:
         return {"error": "No user context available"}
 
     try:
-        from . import projects
-        return projects.tool_list_projects(_current_user_id)
+        from .. import projects
+        return projects.tool_list_projects(current_user_id)
     except Exception as e:
         log_with_context(logger, "error", "List projects failed", error=str(e))
         return {"error": str(e)}
@@ -51,7 +61,7 @@ def tool_update_project_status(project_id: str, status: str, **kwargs) -> Dict[s
     metrics.inc("tool_update_project_status")
 
     try:
-        from . import projects
+        from .. import projects
         return projects.tool_update_project_status(project_id, status)
     except Exception as e:
         log_with_context(logger, "error", "Update project failed", error=str(e))
@@ -72,9 +82,9 @@ def tool_manage_thread(action: str, topic: str = None, notes: str = None, **kwar
     metrics.inc("tool_manage_thread")
 
     try:
-        from . import session_manager
+        from .. import session_manager
 
-        user_id = _current_user_id
+        user_id = _get_current_user_id()
         if not user_id:
             return {"error": "No user context available"}
 
@@ -147,5 +157,4 @@ HINT_WORKING_HOURS_END = 18
 _proactive_daily_count = 0
 _proactive_daily_date = None
 _proactive_last_hint_ts = None
-
 

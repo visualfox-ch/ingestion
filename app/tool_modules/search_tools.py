@@ -5,7 +5,7 @@ Knowledge base search, email search, chat search, web search.
 Extracted from tools.py (Phase S2).
 """
 from typing import Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 import re
 import requests
@@ -27,6 +27,31 @@ RERANK_ALPHA = float(os.getenv("JARVIS_RERANK_ALPHA", "0.7"))
 LEXICAL_RERANK_ENABLED = os.getenv("JARVIS_LEXICAL_RERANK", "true").lower() in ("1", "true", "yes", "on")
 RECENCY_WEIGHT = float(os.getenv("JARVIS_RECENCY_WEIGHT", "0.15"))
 RECENCY_HALF_LIFE_DAYS = float(os.getenv("JARVIS_RECENCY_HALF_LIFE_DAYS", "30"))
+
+
+def _core_tools():
+    from .. import tools as core_tools
+    return core_tools
+
+
+def expand_query_with_name_variants(query: str) -> str:
+    return _core_tools().expand_query_with_name_variants(query)
+
+
+def expand_namespaces(namespace: str) -> List[str]:
+    return _core_tools().expand_namespaces(namespace)
+
+
+def comms_origin_namespaces(namespace: str) -> List[str]:
+    return _core_tools().comms_origin_namespaces(namespace)
+
+
+def _comms_namespace() -> str:
+    return _core_tools().COMMS_NAMESPACE
+
+
+def _comms_collection() -> str:
+    return _core_tools().COMMS_COLLECTION
 
 
 def _tokenize(text: str) -> List[str]:
@@ -278,7 +303,7 @@ def tool_search_knowledge(
     collections_failed = 0
 
     # Handle namespace aliases (work/all)
-    namespaces = [] if namespace == COMMS_NAMESPACE else expand_namespaces(namespace)
+    namespaces = [] if namespace == _comms_namespace() else expand_namespaces(namespace)
 
     for ns in namespaces:
         # Search main collection (emails, docs)
@@ -303,7 +328,7 @@ def tool_search_knowledge(
             collections_searched += 1
             results = _search_qdrant(
                 query=expanded_query,
-                collection=COMMS_COLLECTION,
+                collection=_comms_collection(),
                 limit=limit,
                 recency_days=recency_days,
                 filters={"origin_namespace": ns}
@@ -311,9 +336,9 @@ def tool_search_knowledge(
             all_results.extend(results)
         except JarvisException as e:
             collections_failed += 1
-            errors.append({"collection": COMMS_COLLECTION, "error": e.error.message})
+            errors.append({"collection": _comms_collection(), "error": e.error.message})
             log_with_context(logger, "warning", "Partial search failure",
-                           collection=COMMS_COLLECTION, error=e.error.message)
+                           collection=_comms_collection(), error=e.error.message)
 
     # If ALL collections failed, raise exception
     if collections_failed == collections_searched and collections_searched > 0:
@@ -436,7 +461,7 @@ def tool_search_chats(
     for ns in comms_origin_namespaces(namespace):
         results = _search_qdrant(
             query=expanded_query,
-            collection=COMMS_COLLECTION,
+            collection=_comms_collection(),
             limit=limit,
             filters=filters,
             recency_days=recency_days
@@ -499,7 +524,7 @@ def tool_get_recent_activity(
         for ns in comms_origin_namespaces(namespace):
             chat_results.extend(_search_qdrant(
                 query="chat conversation message discussion",
-                collection=COMMS_COLLECTION,
+                collection=_comms_collection(),
                 limit=10,
                 filters={"origin_namespace": ns},
                 recency_days=days
@@ -647,7 +672,7 @@ def tool_propose_knowledge_update(
     metrics.inc("tool_propose_knowledge_update")
 
     try:
-        from . import knowledge_db
+        from .. import knowledge_db
 
         if not knowledge_db.is_available():
             return {
@@ -706,4 +731,3 @@ def tool_propose_knowledge_update(
     except Exception as e:
         log_with_context(logger, "error", "Failed to propose knowledge update", error=str(e))
         return {"status": "error", "message": str(e)}
-

@@ -257,11 +257,6 @@ from .tool_modules.tool_meta_tools import (
     tool_get_tool_performance,
     tool_get_tool_recommendations,
 )
-from .tool_modules.deploy_tools import (
-    tool_deploy_code_changes,
-    tool_validate_deploy_readiness,
-    tool_get_deploy_history,
-)
 
 # Retrieval tuning (best-practice defaults)
 RERANK_ALPHA = float(os.getenv("JARVIS_RERANK_ALPHA", "0.7"))  # vector weight
@@ -1342,7 +1337,7 @@ Trust Score Guidelines:
 
 ALLOWED PATHS:
 - /brain/system/docker/ - Docker configs (docker-compose.yml)
-- /brain/system/ingestion/app/ - Jarvis source code (*.py)
+- /brain/system/docker/app/ - Jarvis source code (*.py)
 - /brain/system/policies/ - System prompts, policies (*.md)
 - /brain/system/prompts/ - Persona configs, modes (*.json)
 - /brain/projects/ - Project files
@@ -1352,7 +1347,7 @@ ALLOWED PATHS:
 
 EXAMPLES:
 - docker-compose.yml → /brain/system/docker/docker-compose.yml
-- Jarvis code → /brain/system/ingestion/app/agent.py
+- Jarvis code → /brain/system/docker/app/agent.py
 - System prompt → /brain/system/policies/JARVIS_SYSTEM_PROMPT.md
 - LinkedIn updates → /data/linkedin/*.md
 - VisualFox updates → /data/visualfox/*.md
@@ -1380,7 +1375,7 @@ BLOCKED: .env, credentials, secrets, passwords, .key, .pem, id_rsa, .ssh""",
 
 ALLOWED PATHS:
 - /brain/system/docker/ - Docker configs (docker-compose.yml)
-- /brain/system/ingestion/app/ - Jarvis source code (*.py)
+- /brain/system/docker/app/ - Jarvis source code (*.py)
 - /brain/system/policies/ - System prompts, policies (*.md)
 - /brain/system/prompts/ - Persona configs, modes (*.json)
 - /brain/projects/ - Project files
@@ -3534,55 +3529,421 @@ Use this to understand what's currently being worked on and what's planned.""",
                 }
             }
         }
-    },
-
-    # ============ Self-Deploy Tools (Jarvis Autonomy) ============
-
+    }
+,
+    # ============ AUTO-GENERATED DEFINITIONS (T-020 Phase 2) ============
+    
+    # Ollama Tools
     {
-        "name": "deploy_code_changes",
-        "description": "Deploy code changes to production (Jarvis self-deploy). Validates syntax, checks for critical file changes, restarts container, and auto-rolls back on health failure. Requires autonomy level >= 2.",
+        "name": "ask_ollama",
+        "description": "Ask Ollama a question and get an answer. Jarvis's free local sub-assistant for simple tasks.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "validate_only": {
-                    "type": "boolean",
-                    "description": "If true, only validate without deploying",
-                    "default": False
-                },
-                "skip_critical_check": {
-                    "type": "boolean",
-                    "description": "Skip critical file warning (requires prior review)",
-                    "default": False
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Reason for deployment (for audit log)"
-                }
+                "prompt": {"type": "string", "description": "The question or prompt to send to Ollama"},
+                "task_type": {"type": "string", "description": "Type of task (analyze, summarize, etc.)", "default": "analyze"},
+                "system_prompt": {"type": "string", "description": "Optional system prompt"},
+                "max_tokens": {"type": "integer", "description": "Maximum tokens in response"}
+            },
+            "required": ["prompt"]
+        }
+    },
+    {
+        "name": "delegate_ollama_task",
+        "description": "Queue a task for local Ollama execution (async).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_type": {"type": "string", "description": "Type of task"},
+                "instructions": {"type": "string", "description": "Task instructions"},
+                "input_text": {"type": "string", "description": "Input text to process"},
+                "model": {"type": "string", "description": "Ollama model to use"},
+                "max_tokens": {"type": "integer", "description": "Max tokens", "default": 1000}
+            },
+            "required": ["task_type", "instructions"]
+        }
+    },
+    {
+        "name": "get_ollama_task_status",
+        "description": "Get status of a queued Ollama task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID to check"}
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "cancel_ollama_task",
+        "description": "Cancel a pending Ollama task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID to cancel"}
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "get_ollama_queue_status",
+        "description": "Get summary of pending Ollama tasks.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max tasks to return", "default": 10}
             }
         }
     },
     {
-        "name": "validate_deploy_readiness",
-        "description": "Check if code is ready for deployment. Validates Python syntax, import structure, critical file changes, and current health status.",
+        "name": "get_ollama_callback_result",
+        "description": "Get result of a completed async Ollama task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID"},
+                "recent_only": {"type": "boolean", "description": "Only recent results", "default": False}
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "ollama_python",
+        "description": "Generate and execute Python code via local Ollama.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_description": {"type": "string", "description": "What the code should do"},
+                "context": {"type": "string", "description": "Additional context"}
+            },
+            "required": ["task_description"]
+        }
+    },
+    
+    # Timer Tools
+    {
+        "name": "set_timer",
+        "description": "Create a reminder timer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Reminder message"},
+                "delay_minutes": {"type": "integer", "description": "Minutes until reminder"},
+                "delay_seconds": {"type": "integer", "description": "Seconds until reminder"},
+                "due_at": {"type": "string", "description": "ISO datetime for reminder"}
+            },
+            "required": ["message"]
+        }
+    },
+    {
+        "name": "list_timers",
+        "description": "List active timers.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "Filter by status"},
+                "limit": {"type": "integer", "description": "Max timers to return", "default": 50}
+            }
+        }
+    },
+    {
+        "name": "cancel_timer",
+        "description": "Cancel an existing timer.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "timer_id": {"type": "string", "description": "The timer ID to cancel"}
+            },
+            "required": ["timer_id"]
+        }
+    },
+    
+    # Subagent Tools
+    {
+        "name": "delegate_to_subagent",
+        "description": "Delegate a task to a sub-agent with tool access.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Sub-agent to use", "default": "ollama"},
+                "instructions": {"type": "string", "description": "Task instructions"},
+                "input_text": {"type": "string", "description": "Input to process"},
+                "tools": {"type": "array", "description": "Tools the sub-agent can use"},
+                "sync": {"type": "boolean", "description": "Wait for result", "default": False}
+            },
+            "required": ["instructions"]
+        }
+    },
+    {
+        "name": "get_subagent_result",
+        "description": "Get result of a delegated sub-agent task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID"}
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "list_subagents",
+        "description": "List available sub-agents and their capabilities.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    
+    # Identity Tools
+    {
+        "name": "get_self_model",
+        "description": "Get Jarvis's current self-model and identity.",
         "input_schema": {
             "type": "object",
             "properties": {}
         }
     },
     {
-        "name": "get_deploy_history",
-        "description": "Get recent deployment history including restart events and timing.",
+        "name": "evolve_identity",
+        "description": "Evolve Jarvis's identity based on learnings.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Number of entries to return",
-                    "default": 10
-                }
+                "evolution_type": {"type": "string", "description": "Type of evolution"},
+                "field": {"type": "string", "description": "Field to evolve"},
+                "new_value": {"type": "string", "description": "New value"},
+                "reason": {"type": "string", "description": "Why this evolution"}
+            },
+            "required": ["evolution_type", "field", "new_value", "reason"]
+        }
+    },
+    {
+        "name": "get_relationship",
+        "description": "Get relationship memory for a user.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "integer", "description": "User ID", "default": 1}
             }
         }
+    },
+    {
+        "name": "update_relationship",
+        "description": "Update relationship memory for a user.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "integer", "description": "User ID"},
+                "updates": {"type": "object", "description": "Fields to update"}
+            },
+            "required": ["updates"]
+        }
+    },
+    {
+        "name": "get_learning_patterns",
+        "description": "Get validated learning patterns from cross-session analysis.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "min_confidence": {"type": "number", "description": "Minimum confidence", "default": 0.6}
+            }
+        }
+    },
+    {
+        "name": "log_experience",
+        "description": "Log an experience for cross-session learning.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "experience_type": {"type": "string", "description": "Type of experience"},
+                "content": {"type": "string", "description": "Experience content"},
+                "outcome": {"type": "string", "description": "Outcome of experience"}
+            },
+            "required": ["experience_type", "content"]
+        }
+    },
+    {
+        "name": "record_session_learning",
+        "description": "Record learnings from a completed session.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"},
+                "learnings": {"type": "array", "description": "List of learnings"}
+            }
+        }
+    },
+    
+    # Learning/Memory Tools
+    {
+        "name": "store_context",
+        "description": "Store a context value for later retrieval.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "Context key"},
+                "value": {"type": "string", "description": "Context value"},
+                "context_type": {"type": "string", "description": "Type of context", "default": "general"}
+            },
+            "required": ["key", "value"]
+        }
+    },
+    {
+        "name": "recall_context",
+        "description": "Recall a stored context value.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "Context key"},
+                "context_type": {"type": "string", "description": "Type of context"}
+            },
+            "required": ["key"]
+        }
+    },
+    {
+        "name": "forget_context",
+        "description": "Delete stored context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "description": "Context key"},
+                "context_type": {"type": "string", "description": "Type of context"}
+            },
+            "required": ["key"]
+        }
+    },
+    {
+        "name": "store_contexts_batch",
+        "description": "Store multiple context values at once.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contexts": {"type": "array", "description": "List of {key, value, type} objects"}
+            },
+            "required": ["contexts"]
+        }
+    },
+    {
+        "name": "record_learning",
+        "description": "Record a learning/insight for pattern analysis.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Learning category"},
+                "content": {"type": "string", "description": "What was learned"},
+                "confidence": {"type": "number", "description": "Confidence level", "default": 0.8}
+            },
+            "required": ["category", "content"]
+        }
+    },
+    {
+        "name": "record_learnings_batch",
+        "description": "Record multiple learnings at once.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "learnings": {"type": "array", "description": "List of learning objects"}
+            },
+            "required": ["learnings"]
+        }
+    },
+    {
+        "name": "get_learnings",
+        "description": "Retrieve recorded learnings/insights.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Filter by category"},
+                "days_back": {"type": "integer", "description": "Days to look back", "default": 30},
+                "limit": {"type": "integer", "description": "Max results", "default": 20}
+            }
+        }
+    },
+    
+    # Sandbox Tools
+    {
+        "name": "execute_python",
+        "description": "Execute Python code in the sandbox.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Python code to execute"},
+                "reason": {"type": "string", "description": "Why this code is needed"}
+            },
+            "required": ["code"]
+        }
+    },
+    {
+        "name": "request_python_sandbox",
+        "description": "Queue a sandbox request for manual approval.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Python code"},
+                "reason": {"type": "string", "description": "Purpose of the code"},
+                "timeout_seconds": {"type": "integer", "description": "Execution timeout", "default": 30}
+            },
+            "required": ["code", "reason"]
+        }
+    },
+    {
+        "name": "promote_sandbox_tool",
+        "description": "Promote a sandbox tool to production.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tool_name": {"type": "string", "description": "Tool to promote"},
+                "reason": {"type": "string", "description": "Why promote"}
+            },
+            "required": ["tool_name"]
+        }
+    },
+    {
+        "name": "write_dynamic_tool",
+        "description": "Create a new dynamic tool.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Tool name"},
+                "code": {"type": "string", "description": "Tool implementation"},
+                "description": {"type": "string", "description": "Tool description"}
+            },
+            "required": ["name", "code", "description"]
+        }
+    },
+    
+    # API Context Tools
+    {
+        "name": "list_api_context_packs",
+        "description": "List available API context packs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "read_api_context_pack",
+        "description": "Read an API context pack.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pack_name": {"type": "string", "description": "Name of the pack"}
+            },
+            "required": ["pack_name"]
+        }
+    },
+    {
+        "name": "search_api_context_packs",
+        "description": "Search API context packs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"}
+            },
+            "required": ["query"]
+        }
     }
+
 ]
 
 
@@ -3817,205 +4178,8 @@ def _read_single_file(file_path: str, max_lines: int) -> Dict[str, Any]:
     }
 
 
-def tool_analyze_cross_session_patterns(
-    user_id: int = 0,
-    days: int = 30,
-    min_confidence: float = 0.5,
-    **kwargs
-) -> Dict[str, Any]:
-    """Analyze cross-session learning patterns (lessons + decisions)."""
-    log_with_context(logger, "info", "Tool: analyze_cross_session_patterns",
-                    user_id=user_id, days=days, min_confidence=min_confidence)
-    metrics.inc("tool_analyze_cross_session_patterns")
-
-    try:
-        from .cross_session_learner import cross_session_learner
-        lessons = cross_session_learner.get_active_lessons(user_id=user_id, min_confidence=min_confidence)
-        insights = cross_session_learner.get_decision_insights(user_id=user_id, days=days)
-        return {
-            "user_id": user_id,
-            "days": days,
-            "lessons": lessons,
-            "lesson_count": len(lessons),
-            "decision_insights": insights
-        }
-    except Exception as e:
-        log_with_context(logger, "error", "Cross-session analysis failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_optimize_system_prompt(
-    prompt_section: str,
-    focus_area: str = "all",
-    include_metrics: bool = True
-) -> Dict[str, Any]:
-    """Analyze system prompts and suggest optimizations."""
-    log_with_context(logger, "info", "Analyzing system prompt",
-                    section=prompt_section, focus=focus_area)
-
-    # Map sections to actual prompt sources
-    prompt_sources = {
-        "agent": "AGENT_SYSTEM_PROMPT from agent.py",
-        "chat": "SYSTEM_PROMPT from llm_core.py",
-        "coaching": "Coaching domain prompts from coaching_domains.py",
-        "search": "Search prompt templates"
-    }
-
-    if prompt_section not in prompt_sources:
-        return {"error": f"Unknown prompt section: {prompt_section}"}
-
-    suggestions = []
-    metrics_data = {}
-
-    try:
-        # Gather usage metrics if requested
-        if include_metrics:
-            from .observability import metrics as obs_metrics
-            from .feedback_tracker import get_feedback_summary
-            metrics_data = {
-                "agent_runs": obs_metrics.get_stats().get("agent_runs", 0),
-                "feedback_summary": get_feedback_summary()
-            }
-
-        # Generate optimization suggestions based on focus area
-        focus_suggestions = {
-            "clarity": [
-                {"suggestion": "Add explicit examples for ambiguous terms", "confidence": 0.7},
-                {"suggestion": "Break long instructions into numbered steps", "confidence": 0.8}
-            ],
-            "conciseness": [
-                {"suggestion": "Remove redundant phrases ('bitte beachte', etc.)", "confidence": 0.75},
-                {"suggestion": "Consolidate similar rules", "confidence": 0.6}
-            ],
-            "tone": [
-                {"suggestion": "Calibrate formality based on context", "confidence": 0.65},
-                {"suggestion": "Add ADHD-friendly formatting cues", "confidence": 0.8}
-            ],
-            "effectiveness": [
-                {"suggestion": "Add guardrails for common failure modes", "confidence": 0.85},
-                {"suggestion": "Include role-specific context injection", "confidence": 0.7}
-            ]
-        }
-
-        if focus_area == "all":
-            for area, area_suggestions in focus_suggestions.items():
-                for s in area_suggestions:
-                    s["area"] = area
-                    suggestions.append(s)
-        elif focus_area in focus_suggestions:
-            for s in focus_suggestions[focus_area]:
-                s["area"] = focus_area
-                suggestions.append(s)
-
-        # Sort by confidence
-        suggestions.sort(key=lambda x: x["confidence"], reverse=True)
-
-        return {
-            "prompt_section": prompt_section,
-            "source": prompt_sources[prompt_section],
-            "focus_area": focus_area,
-            "suggestions": suggestions[:5],  # Top 5 suggestions
-            "metrics": metrics_data if include_metrics else None,
-            "note": "Diese Vorschlaege basieren auf allgemeinen Best Practices. Fuer spezifischere Optimierungen ist Feedback-Analyse noetig."
-        }
-
-    except Exception as e:
-        log_with_context(logger, "error", "Prompt optimization failed", error=str(e))
-        return {"error": str(e)}
-
-
-def tool_enable_experimental_feature(
-    flag_name: str,
-    action: str,
-    rollout_percent: int = 100,
-    reason: str = None
-) -> Dict[str, Any]:
-    """Enable, disable, check, or create feature flags."""
-    log_with_context(logger, "info", "Feature flag operation",
-                    flag=flag_name, action=action)
-
-    try:
-        from . import feature_flags
-
-        if action == "check":
-            flag = feature_flags.get_flag(flag_name)
-            if flag:
-                return {
-                    "flag_name": flag_name,
-                    "exists": True,
-                    "enabled": flag["enabled"],
-                    "rollout_percent": flag["rollout_percent"],
-                    "version": flag["version"],
-                    "kill_switch": flag["kill_switch"]
-                }
-            else:
-                return {
-                    "flag_name": flag_name,
-                    "exists": False,
-                    "enabled": False,
-                    "note": "Flag nicht gefunden. Nutze action='create' um einen neuen Flag zu erstellen."
-                }
-
-        elif action == "create":
-            flag = feature_flags.create_flag(
-                flag_name=flag_name,
-                description=reason or f"Created by agent tool",
-                enabled=False,
-                rollout_percent=rollout_percent,
-                changed_by="agent_tool"
-            )
-            return {
-                "success": True,
-                "action": "created",
-                "flag": flag,
-                "note": "Feature Flag erstellt. Nutze action='enable' zum Aktivieren."
-            }
-
-        elif action == "enable":
-            flag = feature_flags.update_flag(
-                flag_name=flag_name,
-                enabled=True,
-                rollout_percent=rollout_percent,
-                changed_by="agent_tool",
-                change_reason=reason or "Enabled via agent tool"
-            )
-            if flag:
-                return {
-                    "success": True,
-                    "action": "enabled",
-                    "flag_name": flag_name,
-                    "rollout_percent": rollout_percent,
-                    "version": flag["version"],
-                    "note": "Feature Flag aktiviert (Hot-Reload, kein Restart noetig)"
-                }
-            else:
-                return {"error": f"Flag '{flag_name}' nicht gefunden"}
-
-        elif action == "disable":
-            flag = feature_flags.update_flag(
-                flag_name=flag_name,
-                enabled=False,
-                changed_by="agent_tool",
-                change_reason=reason or "Disabled via agent tool"
-            )
-            if flag:
-                return {
-                    "success": True,
-                    "action": "disabled",
-                    "flag_name": flag_name,
-                    "version": flag["version"],
-                    "note": "Feature Flag deaktiviert"
-                }
-            else:
-                return {"error": f"Flag '{flag_name}' nicht gefunden"}
-
-        else:
-            return {"error": f"Unbekannte Action: {action}. Erlaubt: enable, disable, check, create"}
-
-    except Exception as e:
-        log_with_context(logger, "error", "Feature flag operation failed",
-                        flag=flag_name, action=action, error=str(e))
-        return {"error": str(e)}
+# Phase 18.3 & 6 tools MOVED to tool_modules/self_inspection_tools.py (T-020 refactor)
+# Implementations: tool_analyze_cross_session_patterns, tool_optimize_system_prompt, tool_enable_experimental_feature
 
 
 
@@ -4042,36 +4206,8 @@ tool_ollama_python = _tool_ollama_unavailable
 # Sub-Agent Framework Tools MOVED to tool_modules/subagent_tools.py (T006 refactor)
 # Implementations: tool_delegate_to_subagent, tool_get_subagent_result, tool_list_subagents
 
-# ============ Self-Inspection Tools (Phase 6) ============
-
-def tool_validate_tool_registry(**kwargs) -> Dict[str, Any]:
-    """Validate tool registry consistency."""
-    log_with_context(logger, "info", "Tool: validate_tool_registry")
-    metrics.inc("tool_validate_tool_registry")
-
-    try:
-        from .services.self_validation_service import get_self_validation_service
-
-        service = get_self_validation_service()
-        return service.validate_tool_registry()
-    except Exception as e:
-        log_with_context(logger, "error", "Validate tool registry failed", error=str(e))
-        return {"status": "error", "error": str(e)}
-
-
-def tool_get_response_metrics(hours: int = 24, **kwargs) -> Dict[str, Any]:
-    """Get response performance metrics."""
-    log_with_context(logger, "info", "Tool: get_response_metrics", hours=hours)
-    metrics.inc("tool_get_response_metrics")
-
-    try:
-        from .services.self_validation_service import get_self_validation_service
-
-        service = get_self_validation_service()
-        return service.get_response_metrics(hours=hours)
-    except Exception as e:
-        log_with_context(logger, "error", "Get response metrics failed", error=str(e))
-        return {"status": "error", "error": str(e)}
+# Self-Inspection Tools (Phase 6) MOVED to tool_modules/self_inspection_tools.py (T-020 refactor)
+# Implementations: tool_validate_tool_registry, tool_get_response_metrics
 
 
 # ============ Tool Registry ============
@@ -4114,10 +4250,9 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     # Proactive Initiative
     "proactive_hint": tool_proactive_hint,
     # Phase 18.3: Self-Optimization Tools
-    "optimize_system_prompt": tool_optimize_system_prompt,
-    "enable_experimental_feature": tool_enable_experimental_feature,
+    # optimize_system_prompt, enable_experimental_feature, analyze_cross_session_patterns
+    # MOVED to tool_modules/self_inspection_tools.py (T-020 refactor) - loaded via module loader
     "introspect_capabilities": tool_introspect_capabilities,
-    "analyze_cross_session_patterns": tool_analyze_cross_session_patterns,
     "system_health_check": tool_system_health_check,
     "get_development_status": tool_get_development_status,
     "list_label_registry": tool_list_label_registry,
@@ -4125,8 +4260,7 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "delete_label_registry": tool_delete_label_registry,
     "label_hygiene": tool_label_hygiene,
     "mind_snapshot": tool_mind_snapshot,
-    "validate_tool_registry": tool_validate_tool_registry,
-    "get_response_metrics": tool_get_response_metrics,
+    # validate_tool_registry, get_response_metrics MOVED to tool_modules/self_inspection_tools.py (T-020 refactor)
     "memory_diagnostics": tool_memory_diagnostics,
     "context_window_analysis": tool_context_window_analysis,
     "benchmark_tool_calls": tool_benchmark_tool_calls,
@@ -4253,10 +4387,6 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "read_agent_context": tool_read_agent_context,
     "set_context_privacy_boundary": tool_set_context_privacy_boundary,
     "get_context_pool_stats": tool_get_context_pool_stats,
-    # Self-Deploy Tools (Jarvis autonomy)
-    "deploy_code_changes": tool_deploy_code_changes,
-    "validate_deploy_readiness": tool_validate_deploy_readiness,
-    "get_deploy_history": tool_get_deploy_history,
 }
 
 # Load connector-provided tools (auto-discovery in app/connectors)
@@ -4699,7 +4829,7 @@ try:
         "get_context_tool_patterns": get_context_tool_patterns,
         "get_my_tool_chains": get_my_tool_chains,
         "get_my_failure_analysis": get_my_failure_analysis,
-        "get_tool_recommendations": get_tool_recommendations,
+        # "get_tool_recommendations" - removed, conflicts with tool_meta_tools version (line 3885)
         "refresh_tool_stats": refresh_tool_stats,
         "get_tool_usage_summary": get_tool_usage_summary,
     })
@@ -4842,7 +4972,7 @@ try:
     TOOL_DEFINITIONS.extend(DECISION_TRACKING_TOOLS)
     TOOL_REGISTRY.update({
         "record_decision": record_decision,
-        "record_decision_outcome": record_decision_outcome,
+        # "record_decision_outcome" - removed, conflicts with decision_tools version (line 3860)
         "get_decision_history": get_decision_history,
         "get_decision_stats": get_decision_stats,
         "suggest_decision": suggest_decision,
@@ -5590,7 +5720,7 @@ try:
     TOOL_DEFINITIONS.extend(HANDOFF_TOOLS)
     TOOL_REGISTRY.update({
         "create_handoff": create_handoff,
-        "get_pending_handoffs": get_pending_handoffs,
+        "get_assistant_handoffs": get_pending_handoffs,  # renamed from get_pending_handoffs to avoid conflict with agent_coordination (line 3894)
         "complete_handoff": complete_handoff,
         "get_handoff_context": get_handoff_context,
         "suggest_assistant": suggest_assistant,
@@ -5857,7 +5987,68 @@ try:
 except Exception as e:
     log_with_context(logger, "warning", "SaaS Agent tools load failed", error=str(e))
 
-# Load Knowledge Tools (API Context Packs -- T-20260319-API-CONTEXT-PACK-READ-PATH)
+
+# Load Figma tools (Phase 22A-11)
+try:
+    from .tool_modules.figma_tools import (
+        FIGMA_TOOLS,
+        figma_get_file_metadata,
+        figma_get_nodes,
+        figma_list_comments,
+        figma_post_comment,
+        figma_list_dev_resources,
+        figma_create_dev_resources,
+        figma_update_dev_resources,
+        figma_delete_dev_resource,
+        figma_list_project_files,
+        figma_register_webhook,
+        figma_list_webhooks,
+        figma_update_webhook,
+        figma_delete_webhook,
+    )
+    TOOL_DEFINITIONS.extend(FIGMA_TOOLS)
+    TOOL_REGISTRY.update({
+        "figma_get_file_metadata": figma_get_file_metadata,
+        "figma_get_nodes": figma_get_nodes,
+        "figma_list_comments": figma_list_comments,
+        "figma_post_comment": figma_post_comment,
+        "figma_list_dev_resources": figma_list_dev_resources,
+        "figma_create_dev_resources": figma_create_dev_resources,
+        "figma_update_dev_resources": figma_update_dev_resources,
+        "figma_delete_dev_resource": figma_delete_dev_resource,
+        "figma_list_project_files": figma_list_project_files,
+        "figma_register_webhook": figma_register_webhook,
+        "figma_list_webhooks": figma_list_webhooks,
+        "figma_update_webhook": figma_update_webhook,
+        "figma_delete_webhook": figma_delete_webhook,
+    })
+    log_with_context(logger, "info", "Figma tools loaded (Phase 22A-11)", count=len(FIGMA_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Figma tools load failed", error=str(e))
+
+# T-020: Self-Inspection Tools (extracted from inline)
+try:
+    from .tool_modules.self_inspection_tools import (
+        SELF_INSPECTION_TOOLS,
+        tool_analyze_cross_session_patterns,
+        tool_optimize_system_prompt,
+        tool_enable_experimental_feature,
+        tool_validate_tool_registry,
+        tool_get_response_metrics,
+    )
+    TOOL_DEFINITIONS.extend(SELF_INSPECTION_TOOLS)
+    TOOL_REGISTRY.update({
+        "analyze_cross_session_patterns": tool_analyze_cross_session_patterns,
+        "optimize_system_prompt": tool_optimize_system_prompt,
+        "enable_experimental_feature": tool_enable_experimental_feature,
+        "validate_tool_registry": tool_validate_tool_registry,
+        "get_response_metrics": tool_get_response_metrics,
+    })
+    log_with_context(logger, "info", "Self-Inspection tools loaded (T-020 refactor)", count=len(SELF_INSPECTION_TOOLS))
+except Exception as e:
+    log_with_context(logger, "warning", "Self-Inspection tools load failed", error=str(e))
+
+# T-020: Knowledge Tools (API Context Packs - previously unregistered)
 try:
     from .tool_modules.knowledge_tools import (
         KNOWLEDGE_TOOLS,
@@ -5871,9 +6062,56 @@ try:
         "read_api_context_pack": tool_read_api_context_pack,
         "search_api_context_packs": tool_search_api_context_packs,
     })
-    log_with_context(logger, "info", "Knowledge tools loaded (API Context Packs)", count=len(KNOWLEDGE_TOOLS))
+    log_with_context(logger, "info", "Knowledge tools loaded (T-020 fix)", count=len(KNOWLEDGE_TOOLS))
 except Exception as e:
     log_with_context(logger, "warning", "Knowledge tools load failed", error=str(e))
+
+# T-020: Deploy Tools (Self-deployment - previously unregistered)
+try:
+    from .tool_modules.deploy_tools import (
+        tool_deploy_code_changes,
+        tool_validate_deploy_readiness,
+        tool_get_deploy_history,
+    )
+    # Define schemas inline since no DEPLOY_TOOLS constant exists
+    DEPLOY_TOOL_SCHEMAS = [
+        {
+            "name": "deploy_code_changes",
+            "description": "Deploy code changes to production (Jarvis self-deploy). Requires autonomy level >= 2.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "validate_only": {"type": "boolean", "description": "Only validate without deploying"},
+                    "skip_critical_check": {"type": "boolean", "description": "Skip critical file warning"},
+                    "reason": {"type": "string", "description": "Reason for deployment"}
+                }
+            }
+        },
+        {
+            "name": "validate_deploy_readiness",
+            "description": "Check if code is ready for deployment (syntax, imports, health).",
+            "input_schema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "get_deploy_history",
+            "description": "Get recent deployment history.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Number of entries to return", "default": 10}
+                }
+            }
+        }
+    ]
+    TOOL_DEFINITIONS.extend(DEPLOY_TOOL_SCHEMAS)
+    TOOL_REGISTRY.update({
+        "deploy_code_changes": tool_deploy_code_changes,
+        "validate_deploy_readiness": tool_validate_deploy_readiness,
+        "get_deploy_history": tool_get_deploy_history,
+    })
+    log_with_context(logger, "info", "Deploy tools loaded (T-020 fix)", count=3)
+except Exception as e:
+    log_with_context(logger, "warning", "Deploy tools load failed", error=str(e))
 
 def execute_tool(
     tool_name: str,
@@ -5930,7 +6168,25 @@ def execute_tool(
     guardrails_tools = {"check_guardrails", "get_guardrails", "add_guardrail",
                         "update_guardrail", "request_override", "revoke_override",
                         "get_audit_log", "add_guardrail_feedback", "get_guardrails_summary"}
-    if not skip_guardrails and actor == "jarvis" and tool_name not in guardrails_tools:
+    read_only_safe_tools = {
+        "search_knowledge",
+        "search_emails",
+        "search_chats",
+        "get_recent_activity",
+        "get_calendar_events",
+        "get_gmail_messages",
+        "recall_facts",
+        "recall_conversation_history",
+        "system_health_check",
+        "self_validation_pulse",
+        "introspect_capabilities",
+    }
+    if (
+        not skip_guardrails
+        and actor == "jarvis"
+        and tool_name not in guardrails_tools
+        and tool_name not in read_only_safe_tools
+    ):
         try:
             from .services.guardrails_service import get_guardrails_service
             guardrails_service = get_guardrails_service()

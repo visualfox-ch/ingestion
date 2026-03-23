@@ -4,33 +4,13 @@ Utility Tools.
 Basic utility functions: no_tool, out_of_scope, pending actions, hints.
 Extracted from tools.py (Phase S6).
 """
-import sys
 from typing import Dict, Any
-from datetime import date, datetime
+from datetime import datetime
+import json
 
 from ..observability import get_logger, log_with_context, metrics
 
 logger = get_logger("jarvis.tools.utility")
-
-
-def tool_get_version() -> dict:
-    """
-    Get Jarvis version and build information.
-
-    Returns:
-        dict with version, build_date, python_version, capabilities_count
-    """
-    from ..tools import TOOL_REGISTRY
-
-    log_with_context(logger, "info", "Tool: get_version")
-    metrics.inc("tool_get_version")
-
-    return {
-        "version": "1.0.0",
-        "build_date": date.today().isoformat(),
-        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-        "capabilities_count": len(TOOL_REGISTRY),
-    }
 
 
 def tool_no_tool_needed(reason: str = "", **kwargs) -> Dict[str, Any]:
@@ -58,7 +38,7 @@ def tool_complete_pending_action(
                     action_id=action_id, action_text=action_text)
     metrics.inc("tool_complete_pending_action")
 
-    from . import session_manager
+    from .. import session_manager
 
     if action_id:
         success = session_manager.complete_action(action_id)
@@ -131,7 +111,7 @@ def tool_proactive_hint(
     Returns:
         Status dict with hint info or filter reason
     """
-    from . import config
+    from .. import config
 
     conf_score = _get_confidence_score(confidence)
     level_threshold = _proactive_level_threshold(config.PROACTIVE_LEVEL, config.PROACTIVE_CONFIDENCE_THRESHOLD)
@@ -193,7 +173,7 @@ def tool_proactive_hint(
             }
 
     # Store the hint as a fact for future reference (SQLite)
-    from . import memory_store
+    from .. import memory_store
     hint_fact = f"[Proactive Hint] {observation}"
     memory_store.add_fact(hint_fact, category="insight", confidence=conf_score)
 
@@ -201,7 +181,7 @@ def tool_proactive_hint(
     user_id = kwargs.get("user_id", "unknown")
     session_id = kwargs.get("session_id", "unknown")
     try:
-        from .db_safety import safe_write_query
+        from ..db_safety import safe_write_query
         with safe_write_query("proactive_hints") as cur:
             cur.execute("""
                 INSERT INTO proactive_hints (user_id, session_id, hint_type, category, content, context, confidence, was_shown, metadata)
@@ -269,6 +249,6 @@ BLOCKED_PATTERNS = [
     ".ssh",
 ]
 
-AUDIT_DIR_DOCKER = "/brain/system/ingestion/audit"
-AUDIT_DIR_MAC = "/Volumes/BRAIN/system/ingestion/audit"
+AUDIT_DIR_DOCKER = "/brain/system/docker/audit"
+AUDIT_DIR_MAC = "/Volumes/BRAIN/system/docker/audit"
 

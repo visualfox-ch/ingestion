@@ -133,7 +133,7 @@ def tool_generate_diagram(
         if render_image:
             try:
                 import asyncio
-                from .services.diagram_generator import DiagramGenerator
+                from ..services.diagram_generator import DiagramGenerator
                 generator = DiagramGenerator()
                 loop = asyncio.new_event_loop()
                 image_bytes = loop.run_until_complete(generator.render_mermaid(mermaid_code))

@@ -7,10 +7,11 @@ Extracted from tools.py (Phase S4).
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import json
+import os
 
 from ..observability import get_logger, log_with_context, metrics
 from ..langfuse_integration import observe, langfuse_context
-from ..errors import JarvisException, ErrorCode, internal_error
+from ..errors import JarvisException, ErrorCode, internal_error, wrap_external_error
 
 logger = get_logger("jarvis.tools.memory")
 
@@ -42,7 +43,7 @@ def tool_remember_fact(
     metrics.inc("tool_remember_fact")
 
     try:
-        from . import memory_store
+        from .. import memory_store
         fact_id = memory_store.add_fact(
             fact=fact,
             category=category,
@@ -128,7 +129,7 @@ def tool_recall_facts(
             pass
 
     try:
-        from . import memory_store
+        from .. import memory_store
         facts = memory_store.get_facts(category=category, query=query)
 
         return {
@@ -166,26 +167,8 @@ def tool_recall_facts(
             raise wrap_external_error(e, service="memory_store")
 
 
-
-
-def tool_no_tool_needed(reason: str = "", **kwargs) -> Dict[str, Any]:
-    """Placeholder for when no tool is needed"""
-    log_with_context(logger, "info", "Tool: no_tool_needed", reason=reason)
-    metrics.inc("tool_no_tool_needed")
-    return {"status": "ok", "reason": reason}
-
-
-def tool_request_out_of_scope(reason: str = "Unspecified", suggestion: str = "Nutze ein anderes Tool", **kwargs) -> Dict[str, Any]:
-    """Signal that a request is outside Jarvis's capabilities"""
-    log_with_context(logger, "info", "Tool: request_out_of_scope",
-                    reason=reason[:100] if reason else "N/A", suggestion=suggestion[:100] if suggestion else "N/A")
-    metrics.inc("tool_request_out_of_scope")
-    return {
-        "status": "out_of_scope",
-        "reason": reason,
-        "suggestion": suggestion,
-        "message": f"Diese Anfrage liegt ausserhalb meiner Faehigkeiten: {reason}. Vorschlag: {suggestion}"
-    }
+# NOTE: tool_no_tool_needed and tool_request_out_of_scope removed (T-020)
+# Canonical definitions are in utility_tools.py
 
 
 # ============ Context Persistence Tools ============
@@ -206,7 +189,7 @@ def tool_remember_conversation_context(
                     topics=len(key_topics), pending=len(pending_actions or []))
     metrics.inc("tool_remember_conversation_context")
 
-    from . import session_manager
+    from .. import session_manager
 
     # Build emotional indicators
     emotional_indicators = {}
@@ -256,7 +239,7 @@ def tool_recall_conversation_history(
                     days_back=days_back, topic_filter=topic_filter)
     metrics.inc("tool_recall_conversation_history")
 
-    from . import session_manager
+    from .. import session_manager
 
     # Get conversation history
     history = session_manager.get_conversation_history(
@@ -339,7 +322,7 @@ def tool_get_person_context(person_id: str, **kwargs) -> Dict[str, Any]:
 
     # Try knowledge layer first
     try:
-        from . import knowledge_db
+        from .. import knowledge_db
 
         if knowledge_db.is_available():
             profile = knowledge_db.get_person_profile(person_id)
@@ -517,5 +500,4 @@ def tool_recall_with_timeframe(
     except Exception as e:
         log_with_context(logger, "error", "recall_with_timeframe failed", error=str(e))
         return {"error": str(e)}
-
 
