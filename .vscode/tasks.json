@@ -1,0 +1,340 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Restart Ingestion API (NAS)",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/jarvis-docker.sh restart ingestion",
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Wait for API (Healthcheck)",
+      "type": "shell",
+      "command": "scripts/wait_for_api.sh",
+      "dependsOn": ["Restart Ingestion API (NAS)"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Test Asana API (NAS)",
+      "type": "shell",
+      "command": "python3 scripts/test_asana_api.py",
+      "group": "test",
+      "dependsOn": ["Wait for API (Healthcheck)"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: G1 Doctor",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.doctor",
+      "detail": "Workspace and command-layer sanity report.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: G2 Fast Validate",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.validate.fast",
+      "detail": "Fast local preflight before a larger verify or deploy step.",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: G3 Targeted Verify",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.verify.targeted ${input:jarvisTargetedFiles}",
+      "detail": "Run the pre-deploy gate plus focused checks for selected files.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: G3.5 PQ Strict Gate",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.ssh.pq.strict",
+      "detail": "Fail fast unless SSH to NAS negotiates PQ-capable KEX.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: G4 Smart Deploy",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.deploy.smart",
+      "detail": "Preferred deploy path. Auto-selects the safest deploy tier.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: G5 Confidence",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.confidence",
+      "detail": "Post-deploy smoke checks and reality snapshot on the NAS.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: G5.5 CI Pipeline Strict",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.ci.pipeline.status --latest-details --require-success",
+      "detail": "Strictly verify latest pipeline-contract run and include job conclusions.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: Status",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.status",
+      "detail": "Show the current Jarvis service status on the NAS.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: Logs Ingestion",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.logs.ingestion",
+      "detail": "Show ingestion logs from the NAS service.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: Restart Ingestion",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.restart.ingestion",
+      "detail": "Restart the ingestion service on the NAS.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: PQ Upgrade Preflight",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.ssh.pq.upgrade.preflight",
+      "detail": "Capture NAS SSH/package baseline before PQ upgrade work.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: Preflight (G1+G2)",
+      "detail": "Standard preflight: Doctor check + Fast Validate. Use for normal changes.",
+      "dependsOn": ["Jarvis: G1 Doctor", "Jarvis: G2 Fast Validate"],
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Jarvis: Risk Preflight (G1+G2+G3)",
+      "detail": "Risk-aware preflight for auth/state/database/security changes.",
+      "dependsOn": [
+        "Jarvis: G1 Doctor",
+        "Jarvis: G2 Fast Validate",
+        "Jarvis: G3 Targeted Verify"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Deploy (G1+G2+G4)",
+      "detail": "Standard deploy path: Doctor + Validate + Smart Deploy.",
+      "dependsOn": [
+        "Jarvis: G1 Doctor",
+        "Jarvis: G2 Fast Validate",
+        "Jarvis: G4 Smart Deploy"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Deploy PQ-Gated (G1+G2+PQ+G4+G5)",
+      "detail": "Deploy path with strict PQ handshake gate before smart deploy.",
+      "dependsOn": [
+        "Jarvis: G1 Doctor",
+        "Jarvis: G2 Fast Validate",
+        "Jarvis: G3.5 PQ Strict Gate",
+        "Jarvis: G4 Smart Deploy",
+        "Jarvis: G5 Confidence"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Full Deploy (G1+G2+G4+G5)",
+      "detail": "Full deploy with confidence checks: Doctor + Validate + Deploy + Smoke.",
+      "dependsOn": [
+        "Jarvis: G1 Doctor",
+        "Jarvis: G2 Fast Validate",
+        "Jarvis: G4 Smart Deploy",
+        "Jarvis: G5 Confidence"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: G6 Safety Parallel",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run jarvis.safety.parallel",
+      "detail": "Run guardrails and sandbox safety probes in parallel.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      },
+      "group": "build"
+    },
+    {
+      "label": "Jarvis: Safety + Confidence (G6||G5)",
+      "detail": "Run the parallel safety probe and confidence checks together.",
+      "dependsOn": ["Jarvis: G6 Safety Parallel", "Jarvis: G5 Confidence"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Observe + Safety + Confidence (Status||G6||G5)",
+      "detail": "Run status observation alongside safety and confidence checks.",
+      "dependsOn": [
+        "Jarvis: Status",
+        "Jarvis: G6 Safety Parallel",
+        "Jarvis: G5 Confidence"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Readiness Gate (G1+G2->G6||G5)",
+      "detail": "Run preflight first, then execute safety and confidence in parallel.",
+      "dependsOn": [
+        "Jarvis: Preflight (G1+G2)",
+        "Jarvis: Safety + Confidence (G6||G5)"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Risk Readiness (G1+G2+G3->Status||G6||G5)",
+      "detail": "Run risk preflight first, then execute status, safety, and confidence in parallel.",
+      "dependsOn": [
+        "Jarvis: Risk Preflight (G1+G2+G3)",
+        "Jarvis: Observe + Safety + Confidence (Status||G6||G5)"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Full Readiness (G1+G2+G4->Status||G6||G5)",
+      "detail": "Deploy first, then run status, safety, and confidence in parallel.",
+      "dependsOn": [
+        "Jarvis: Deploy (G1+G2+G4)",
+        "Jarvis: Observe + Safety + Confidence (Status||G6||G5)"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Full Readiness + CI Gate (G1+G2+G4->Status||G6||G5->CI)",
+      "detail": "Run full readiness first, then strict latest pipeline-contract verification with job details.",
+      "dependsOn": [
+        "Jarvis: Full Readiness (G1+G2+G4->Status||G6||G5)",
+        "Jarvis: G5.5 CI Pipeline Strict"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Risk Deploy + Parallel (G1+G2+G3->G4->Status||G6||G5)",
+      "detail": "Risk-ready preflight, deploy, then parallel observation. Most rigorous CI/CD path.",
+      "dependsOn": [
+        "Jarvis: Risk Preflight (G1+G2+G3)",
+        "Jarvis: G4 Smart Deploy",
+        "Jarvis: Observe + Safety + Confidence (Status||G6||G5)"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Jarvis: Docs Cleanup (preflight + gate)",
+      "type": "shell",
+      "command": "/Volumes/BRAIN/system/docker/scripts/jarvis_onecmd_cli.sh run docs.cleanup.check",
+      "detail": "Check and repair documentation: frontmatter, invalid domains, duplicates.",
+      "problemMatcher": [],
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Jarvis: Full CI/CD Parallel (Full Readiness || Risk Deploy || Docs)",
+      "detail": "Master orchestration: run Full Readiness, Risk Deploy, and Docs Cleanup all in parallel.",
+      "dependsOn": [
+        "Jarvis: Full Readiness (G1+G2+G4->Status||G6||G5)",
+        "Jarvis: Risk Deploy + Parallel (G1+G2+G3->G4->Status||G6||G5)",
+        "Jarvis: Docs Cleanup (preflight + gate)"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "jarvisTargetedFiles",
+      "type": "promptString",
+      "description": "Space-separated target files for focused verification. Leave blank for the generic gate path.",
+      "default": ""
+    }
+  ]
+}
