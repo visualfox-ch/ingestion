@@ -26,3 +26,6 @@ jobs:
 
       - name: Python syntax check
         run: ruff check --select=E9,F63,F7 --no-cache app/
+
+      - name: Undefined name warnings (non-blocking)
+        run: ruff check --select=F821 --no-cache app/ || true
