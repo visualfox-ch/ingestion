@@ -4,6 +4,8 @@ Dynamic Model Router for Jarvis.
 Phase 21+: Fully database-driven model selection.
 All patterns, rules, and configurations are in the database,
 allowing Jarvis to learn and optimize model selection over time.
+
+T-025: Ollama routing with fast fallback to Haiku
 """
 
 import os
@@ -17,9 +19,12 @@ from enum import Enum
 from app.postgres_state import get_conn
 from psycopg2.extras import RealDictCursor
 
+# Import Ollama availability check from LLM router
+from app.llm.router import is_ollama_available
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_OLLAMA_MODEL = os.environ.get("JARVIS_OLLAMA_DEFAULT_MODEL", "qwen2.5:7b-instruct")
+DEFAULT_OLLAMA_MODEL = os.environ.get("JARVIS_OLLAMA_DEFAULT_MODEL", "phi4-mini")
 DEFAULT_LOCAL_TASK_TYPES = {
     "general_chat",
     "cheap_local",
@@ -227,10 +232,17 @@ class DynamicModelRouter:
         complexity: float,
         context: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
-        """Return a local-first provider preference when a task is latency or cost sensitive."""
-        if os.environ.get("JARVIS_OLLAMA_LOCAL_ROUTING_ENABLED", "true").lower() not in {
-            "1", "true", "yes", "on"
-        }:
+        """
+        Return a local-first provider preference when a task is latency or cost sensitive.
+
+        T-025: Now includes fast Ollama availability check with fallback.
+        Returns None if Ollama unavailable (triggers Haiku fallback in selection).
+        """
+        logger.info(f"_get_local_first_provider called: task={task_type}, complexity={complexity}")
+
+        routing_enabled = os.environ.get("JARVIS_OLLAMA_LOCAL_ROUTING_ENABLED", "true").lower()
+        if routing_enabled not in {"1", "true", "yes", "on"}:
+            logger.info(f"Local routing disabled: JARVIS_OLLAMA_LOCAL_ROUTING_ENABLED={routing_enabled}")
             return None
 
         raw_task_types = os.environ.get(
@@ -255,8 +267,24 @@ class DynamicModelRouter:
         if complexity > local_threshold and not explicit_local:
             return None
 
-        if explicit_local or latency_sensitive or cost_sensitive or task_type in local_task_types:
-            return Provider.OLLAMA.value
+        # Check if this task should use local inference
+        should_use_local = (
+            explicit_local or
+            latency_sensitive or
+            cost_sensitive or
+            task_type in local_task_types
+        )
+
+        if should_use_local:
+            # T-025: Fast check if Ollama is actually available (500ms timeout, cached)
+            ollama_ok = is_ollama_available()
+            logger.info(f"Local routing check: task={task_type}, complexity={complexity}, ollama_available={ollama_ok}")
+            if ollama_ok:
+                return Provider.OLLAMA.value
+            else:
+                # Ollama unavailable - return None to trigger API fallback
+                logger.info(f"Ollama unavailable, falling back to Haiku")
+                return None
 
         return None
 
