@@ -34,3 +34,15 @@ Vor jeder Empfehlung muss der Agent kurz pruefen und explizit beantworten:
 	- future-proofing ohne konkreten Anwendungsfall
 	- Abstraktion vor validiertem Bedarf
 8. Wenn Unsicherheit besteht, zuerst die reversible, kleine und gut messbare Variante empfehlen.
+
+### Research Validation Gate (Pflicht vor finaler Empfehlung)
+
+- Fuehre vor finalen Research-/Architektur-Empfehlungen den Hard-Negative-Check aus:
+	- `.github/instructions/research-negative-acceptance.instructions.md`
+- Dokumentiere kurz das Ergebnis (PASS/FAIL + 1 Satz Begruendung).
+
+### Fast Reviewer Gate (30 Sekunden)
+
+- Nutze vor Abschluss die Schnellpruefung aus:
+	- `.github/instructions/reviewer-gate-fast-checklist.instructions.md`
+- Wenn ein Gate-Punkt FAIL ist: keine High-Complexity-Empfehlung freigeben.
