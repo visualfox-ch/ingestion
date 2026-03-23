@@ -123,12 +123,25 @@ class N8NWorkflowManager:
         return result
 
     def activate_workflow(self, workflow_id: str) -> Dict[str, Any]:
-        """Activate a workflow."""
-        return self.update_workflow(workflow_id, {"active": True})
+        """Activate a workflow using the dedicated activation endpoint."""
+        # n8n API v1 has dedicated endpoints for activation
+        result = self._request("POST", f"/workflows/{workflow_id}/activate")
+
+        if "error" not in result:
+            log_with_context(logger, "info", "Workflow activated",
+                           workflow_id=workflow_id)
+
+        return result
 
     def deactivate_workflow(self, workflow_id: str) -> Dict[str, Any]:
-        """Deactivate a workflow."""
-        return self.update_workflow(workflow_id, {"active": False})
+        """Deactivate a workflow using the dedicated deactivation endpoint."""
+        result = self._request("POST", f"/workflows/{workflow_id}/deactivate")
+
+        if "error" not in result:
+            log_with_context(logger, "info", "Workflow deactivated",
+                           workflow_id=workflow_id)
+
+        return result
 
     def delete_workflow(self, workflow_id: str) -> Dict[str, Any]:
         """Delete a workflow."""

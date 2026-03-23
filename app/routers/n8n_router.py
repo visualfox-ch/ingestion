@@ -515,3 +515,73 @@ def get_sla_tiers():
         "workflow_assignments": n8n_rel.WORKFLOW_TIERS,
         "description": "n8n Reliability Contract SLA definitions"
     }
+
+
+# =============================================================================
+# N8N MONITORING & AUTO-HEALING
+# =============================================================================
+
+@router.get("/monitor")
+def get_n8n_monitor_status():
+    """
+    Get real-time n8n workflow monitoring dashboard data.
+
+    Returns comprehensive status including:
+    - Total/active/inactive workflow counts
+    - Critical workflows that are down
+    - Error rates and recent failures
+    - Health assessment
+    """
+    from ..services.n8n_monitoring_service import get_n8n_monitoring_service
+    service = get_n8n_monitoring_service()
+    return service.get_dashboard_data()
+
+
+@router.get("/monitor/status")
+def get_workflow_status_summary():
+    """Get workflow status summary."""
+    from ..services.n8n_monitoring_service import get_n8n_monitoring_service
+    service = get_n8n_monitoring_service()
+    return service.get_workflow_status()
+
+
+@router.get("/monitor/errors")
+def get_workflow_errors(hours: int = 24):
+    """Get workflow error summary for the last N hours."""
+    from ..services.n8n_monitoring_service import get_n8n_monitoring_service
+    service = get_n8n_monitoring_service()
+    return service.get_error_summary()
+
+
+@router.get("/monitor/executions")
+def get_recent_executions(hours: int = 24, limit: int = 50):
+    """Get recent workflow executions."""
+    from ..services.n8n_monitoring_service import get_n8n_monitoring_service
+    service = get_n8n_monitoring_service()
+    return service.get_recent_executions(hours=hours, limit=limit)
+
+
+@router.post("/monitor/heal")
+def trigger_auto_heal():
+    """
+    Trigger auto-healing for n8n workflows.
+
+    This will:
+    - Reactivate stopped critical workflows
+    - Ensure error handlers are attached
+    """
+    from ..services.n8n_monitoring_service import get_n8n_monitoring_service
+    service = get_n8n_monitoring_service()
+    return service.auto_heal()
+
+
+@router.post("/monitor/sync")
+def sync_workflows_from_files():
+    """
+    Sync workflows from JSON files to n8n.
+
+    Creates missing workflows from /brain/system/n8n/workflows/*.json
+    """
+    from ..services.n8n_monitoring_service import get_n8n_monitoring_service
+    service = get_n8n_monitoring_service()
+    return service.sync_from_files()

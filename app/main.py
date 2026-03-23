@@ -54,6 +54,7 @@ from .auth import auth_dependency, is_public_endpoint, is_auth_enabled, get_auth
 from .state import global_state
 from .routers.health_router import router as health_router
 from .routers.metrics_router import router as metrics_router
+from .routers.deploy_status_router import router as deploy_status_router
 from .routers.dashboard_router import router as dashboard_router
 from .routers.notifications_router import router as notifications_router
 from .routers.memory_router import router as memory_router
@@ -184,6 +185,7 @@ def compute_confidence(search_results: List[Dict[str, Any]]) -> Dict[str, Any]:
 app.include_router(health_router)
 app.include_router(metrics_router)
 app.include_router(dashboard_router)
+app.include_router(deploy_status_router)
 app.include_router(notifications_router)
 app.include_router(workflow_router)
 app.include_router(memory_router)

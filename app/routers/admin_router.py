@@ -9,16 +9,23 @@ Extracted from main.py - Administration endpoints for:
 - Capabilities management
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 import json
 
+from ..capability_paths import get_capabilities_json_path
 from ..observability import get_logger
+from ..auth import auth_dependency
 
 logger = get_logger("jarvis.admin")
-router = APIRouter(prefix="/admin", tags=["admin"])
+# All admin endpoints require authentication
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(auth_dependency)]
+)
 
 
 # =============================================================================
@@ -569,9 +576,9 @@ def get_capabilities():
     """
     try:
         # Try to load CAPABILITIES.json
-        cap_file = Path("/brain/system/docs/CAPABILITIES.json")
+        cap_file = get_capabilities_json_path()
         if cap_file.exists():
-            with open(cap_file, "r") as f:
+            with cap_file.open("r", encoding="utf-8") as f:
                 capabilities = json.load(f)
                 capabilities["source"] = "capabilities_json"
                 return capabilities
@@ -606,11 +613,11 @@ def refresh_capabilities():
     from ..observability import log_with_context
 
     try:
-        cap_file = Path("/brain/system/docs/CAPABILITIES.json")
+        cap_file = get_capabilities_json_path()
 
         if cap_file.exists():
             # Validate JSON
-            with open(cap_file, "r") as f:
+            with cap_file.open("r", encoding="utf-8") as f:
                 capabilities = json.load(f)
 
             log_with_context(logger, "info", "Capabilities refreshed",
@@ -754,3 +761,94 @@ def list_dynamic_tool_files():
         "files": files,
         "count": len(files)
     }
+
+
+# =============================================================================
+# DEPLOY HISTORY (Multi-Agent Coordination)
+# =============================================================================
+
+class DeployHistoryEntry(BaseModel):
+    """Record of a deployment"""
+    agent: str
+    git_sha: str
+    tier: int
+    status: str
+    elapsed_seconds: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@router.post("/deploy-history")
+def record_deploy_history(entry: DeployHistoryEntry):
+    """
+    Record a deployment in history.
+    Called by deploy-smart.sh after each successful deploy.
+    """
+    from ..tool_modules.postgres_state import get_conn
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO deploy_history
+                        (agent, git_sha, tier, status, elapsed_seconds, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    entry.agent,
+                    entry.git_sha,
+                    entry.tier,
+                    entry.status,
+                    entry.elapsed_seconds,
+                    json.dumps(entry.metadata or {})
+                ))
+                deploy_id = cur.fetchone()["id"]
+                conn.commit()
+
+        logger.info(f"Deploy recorded: {entry.agent} tier={entry.tier} sha={entry.git_sha}")
+        return {"status": "recorded", "deploy_id": deploy_id}
+
+    except Exception as e:
+        logger.error(f"Failed to record deploy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/deploy-history")
+def get_deploy_history(limit: int = 20, agent: Optional[str] = None):
+    """
+    Get recent deployment history.
+    Useful for debugging multi-agent deploy issues.
+    """
+    from ..tool_modules.postgres_state import get_conn
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                if agent:
+                    cur.execute("""
+                        SELECT id, agent, git_sha, tier, status, elapsed_seconds,
+                               started_at, completed_at
+                        FROM deploy_history
+                        WHERE agent = %s
+                        ORDER BY started_at DESC
+                        LIMIT %s
+                    """, (agent, limit))
+                else:
+                    cur.execute("""
+                        SELECT id, agent, git_sha, tier, status, elapsed_seconds,
+                               started_at, completed_at
+                        FROM deploy_history
+                        ORDER BY started_at DESC
+                        LIMIT %s
+                    """, (limit,))
+
+                rows = cur.fetchall()
+
+        return {
+            "deploys": [dict(r) for r in rows],
+            "count": len(rows),
+            "filter_agent": agent
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get deploy history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
