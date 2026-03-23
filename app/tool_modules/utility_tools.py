@@ -12,6 +12,84 @@ from ..observability import get_logger, log_with_context, metrics
 
 logger = get_logger("jarvis.tools.utility")
 
+_proactive_daily_count = 0
+_proactive_daily_date = ""
+_proactive_last_hint_ts = None
+
+
+def _get_confidence_score(confidence: str) -> float:
+    """Map confidence string to float score."""
+    confidence_map = {"low": 0.5, "medium": 0.7, "high": 0.9}
+    return confidence_map.get(str(confidence).lower(), 0.7)
+
+
+def _proactive_level_threshold(level: int, base_threshold: float) -> float:
+    """Map proactivity level to confidence threshold."""
+    if level <= 1:
+        return 1.01
+    if level == 2:
+        return 0.9
+    if level == 3:
+        return base_threshold
+    if level == 4:
+        return 0.5
+    return 0.3
+
+
+def _is_quiet_hours() -> bool:
+    """Check if current time falls within configured quiet hours."""
+    import os
+    import pytz
+    from .. import config
+
+    tz = pytz.timezone(os.environ.get("TZ", "Europe/Zurich"))
+    now = datetime.now(tz)
+
+    def _parse_hhmm(value: str) -> int:
+        try:
+            parts = value.split(":")
+            return int(parts[0]) * 60 + int(parts[1])
+        except Exception:
+            return 0
+
+    start_min = _parse_hhmm(config.PROACTIVE_QUIET_HOURS_START)
+    end_min = _parse_hhmm(config.PROACTIVE_QUIET_HOURS_END)
+    now_min = now.hour * 60 + now.minute
+
+    if start_min == end_min:
+        return False
+    if start_min < end_min:
+        return start_min <= now_min < end_min
+    return now_min >= start_min or now_min < end_min
+
+
+def _check_proactive_rate_limits(now: datetime, max_per_day: int, cooldown_minutes: int) -> Dict[str, Any]:
+    """Simple per-process rate limits for proactive hints."""
+    global _proactive_daily_count, _proactive_daily_date, _proactive_last_hint_ts
+
+    today = now.date().isoformat()
+    if _proactive_daily_date != today:
+        _proactive_daily_date = today
+        _proactive_daily_count = 0
+
+    if max_per_day > 0 and _proactive_daily_count >= max_per_day:
+        return {
+            "allowed": False,
+            "reason": "daily_limit",
+            "message": f"Daily proactive limit reached ({max_per_day}).",
+        }
+
+    if _proactive_last_hint_ts is not None and cooldown_minutes > 0:
+        delta_min = (now.timestamp() - _proactive_last_hint_ts) / 60.0
+        if delta_min < cooldown_minutes:
+            return {
+                "allowed": False,
+                "reason": "cooldown",
+                "message": f"Cooldown active ({cooldown_minutes} min).",
+            }
+
+    return {"allowed": True}
+
 
 def tool_no_tool_needed(reason: str = "", **kwargs) -> Dict[str, Any]:
     """Placeholder for when no tool is needed"""

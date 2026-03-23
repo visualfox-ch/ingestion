@@ -6,11 +6,41 @@ Extracted from tools.py (Phase S5).
 """
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from collections import Counter, defaultdict
+import json
+import os
 
 from ..observability import get_logger, log_with_context, metrics
 from ..errors import JarvisException, ErrorCode, internal_error
 
 logger = get_logger("jarvis.tools.label")
+
+# Keep this module self-contained (no dependency on app.tools to avoid circular imports).
+VALUE_ALIASES: Dict[str, Dict[str, Any]] = {}
+QDRANT_HOST = os.environ.get("QDRANT_HOST", "qdrant")
+QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
+
+
+def get_registry_entries(status: str = None):
+    return []
+
+
+def upsert_registry_entry(**kwargs):
+    return kwargs
+
+
+def delete_registry_entry(key: str, hard: bool = False) -> bool:
+    return False
+
+
+try:
+    from ..label_schema import refresh_label_schema_cache, get_label_schema
+except ImportError:
+    def refresh_label_schema_cache() -> None:
+        return None
+
+    def get_label_schema() -> Dict[str, Any]:
+        return {}
 
 
 def tool_list_label_registry(**kwargs) -> Dict[str, Any]:
