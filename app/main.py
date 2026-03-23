@@ -50,9 +50,11 @@ from . import hybrid_search
 from .pattern_tracker import pattern_tracker
 from . import config
 from . import metrics
+from . import memory_store
+from . import remediation_manager
 from .auth import auth_dependency, is_public_endpoint, is_auth_enabled, get_auth_status
 from .state import global_state
-from .routers.health_router import router as health_router
+from .routers.health_router import router as health_router, health_check as health_check_route
 from .routers.metrics_router import router as metrics_router
 from .routers.deploy_status_router import router as deploy_status_router
 from .routers.dashboard_router import router as dashboard_router
@@ -137,6 +139,24 @@ app = FastAPI()
 QDRANT_HOST = os.environ.get("QDRANT_HOST", "qdrant")
 QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
 QDRANT_BASE = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
+BRAIN_ROOT = Path(os.environ.get("BRAIN_ROOT", "/brain"))
+
+
+def upsert_vectors(collection: str, vectors: list, payloads: list, ids: list) -> dict:
+    """Backward-compatible point upsert helper for direct vector writes."""
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import PointStruct
+
+    if not vectors:
+        return {"inserted": 0}
+
+    client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    points = [
+        PointStruct(id=point_id, vector=vector, payload=payload)
+        for point_id, vector, payload in zip(ids, vectors, payloads)
+    ]
+    client.upsert(collection_name=collection, points=points)
+    return {"inserted": len(points)}
 
 def compute_confidence(search_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -707,7 +727,7 @@ def track_intervention_feedback(request: InterventionFeedbackRequest):
             accepted=request.accepted,
             notes=request.notes
         )
-        return {"status": "feedback tracked", "accepted": accepted}
+        return {"status": "feedback tracked", "accepted": request.accepted}
     except Exception as e:
         return {"status": "error", "error": str(e)}
     """Check backup directory and recent backups."""
@@ -1009,7 +1029,7 @@ def health_dashboard():
     from fastapi.responses import HTMLResponse
     
     # Get health data
-    health_data = health_check()
+    health_data = health_check_route()
     
     # Calculate component statuses
     def get_status_class(check):
@@ -6832,16 +6852,3 @@ def get_backup_status(rate_limit: Any = Depends(rate_limit_dependency)):
             
     except Exception as e:
         return {"success": False, "error": str(e)}
-    """Update a user's competency level."""
-    try:
-        from . import competency_model
-        success = competency_model.update_competency(
-            user_id=user_id,
-            domain_id=domain_id,
-            competency_name=competency_name,
-            new_level=new_level,
-            evidence=evidence
-        )
-        return {"status": "success" if success else "failed"}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}

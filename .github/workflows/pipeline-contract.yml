@@ -29,3 +29,14 @@ jobs:
 
       - name: Undefined name warnings (non-blocking)
         run: ruff check --select=F821 --no-cache app/ || true
+
+      - name: F821 trend snapshot (non-blocking)
+        run: |
+          count=$(ruff check --select=F821 --no-cache app/ 2>&1 | grep -c "F821 Undefined name" || true)
+          echo "F821 undefined-name findings: $count"
+          {
+            echo "## F821 Trend Snapshot"
+            echo ""
+            echo "- Findings: $count"
+            echo "- Policy: non-blocking (tracking phase)"
+          } >> "$GITHUB_STEP_SUMMARY"
