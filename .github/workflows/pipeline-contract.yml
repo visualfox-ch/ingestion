@@ -1,0 +1,28 @@
+name: Pipeline Contract
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  contract-quick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff --quiet
+
+      - name: Python syntax check
+        run: ruff check --select=E9,F63,F7,F82 --no-cache app/
