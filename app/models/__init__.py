@@ -8,6 +8,11 @@ Components:
 - scope_ref: ScopeRef model (replaces legacy namespace strings)
 """
 from .circuit_breaker import CircuitBreaker, CircuitState
+from .property import (
+    PropertyType, TransactionType, AlertPriority, SourceType,
+    PriceRange, AreaRange, RoomRange, GeoFilter, SearchProfile,
+    GeoLocation, Contact, Property, ScoreBreakdown, MatchResult
+)
 from typing import Optional
 from pydantic import BaseModel
 
@@ -47,4 +52,13 @@ class ScopeRef(BaseModel):
         return _SCOPE_TO_NAMESPACE.get((self.org, self.visibility), "work_projektil")
 
 
-__all__ = ["CircuitBreaker", "CircuitState", "ScopeRef", "_NAMESPACE_TO_SCOPE", "_SCOPE_TO_NAMESPACE"]
+__all__ = [
+    # Circuit breaker
+    "CircuitBreaker", "CircuitState",
+    # Scope
+    "ScopeRef", "_NAMESPACE_TO_SCOPE", "_SCOPE_TO_NAMESPACE",
+    # Real Estate models
+    "PropertyType", "TransactionType", "AlertPriority", "SourceType",
+    "PriceRange", "AreaRange", "RoomRange", "GeoFilter", "SearchProfile",
+    "GeoLocation", "Contact", "Property", "ScoreBreakdown", "MatchResult",
+]

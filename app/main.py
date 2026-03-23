@@ -125,6 +125,7 @@ from .routers.linkedin_knowledge_router import (
     visualfox_router,
     knowledge_router as linkedin_knowledge_combined_router
 )
+from .routers.real_estate_router import router as real_estate_router
 from .routers.kb_router import router as kb_router
 
 app = FastAPI()
@@ -253,6 +254,7 @@ app.include_router(visualfox_router)  # visualfox Knowledge Base (legacy)
 app.include_router(linkedin_knowledge_combined_router)  # Combined Knowledge Base (legacy)
 app.include_router(kb_router)  # DB-gesteuerte Knowledge Base (neu)
 
+app.include_router(real_estate_router)  # Real Estate Intelligence Agent
 # =============================================================================
 # MEMORY PROFILING ENDPOINT (PRE-Sprint Task C - Copilot)
 # =============================================================================
