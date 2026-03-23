@@ -6,3 +6,5 @@ __pycache__/
 ._*
 **/._*
 app_deploy_tmp_*/
+.vscode/
+docs/library/ops/drift_snapshot_*.txt
