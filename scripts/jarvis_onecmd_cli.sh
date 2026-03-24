@@ -37,6 +37,8 @@ jarvis.docs.preflight|docs|Run docs preflight checks
 docs.cleanup.check|docs|Check and propose docs cleanup (frontmatter, domains, duplicates)
 jarvis.reality.check|ops|Run reality checks script
 jarvis.safety.parallel|ops|Run parallel guardrails+sandbox runtime safety probes
+jarvis.calibration.diagnose|ops|Diagnose calibration dimension from reality snapshot metrics
+jarvis.calibration.cron.install|ops|Install NAS cron for periodic calibration diagnose recording
 jarvis.ci.pipeline.status|ops|Show pipeline-contract run status with gh/API fallback
 jarvis.ssh.pq.strict|ops|Run strict PQ audit (exit non-zero unless PQ KEX negotiated)
 jarvis.ssh.pq.upgrade.preflight|ops|Run NAS preflight checks for OpenSSH PQ upgrade track
@@ -96,13 +98,15 @@ run_id() {
     jarvis.validate.fast) cmd="cd '$OPS_ROOT' && FAST_PREFLIGHT_AUTOSYNC_GENERATED=${FAST_PREFLIGHT_AUTOSYNC_GENERATED:-1} bash ./scripts/fast-preflight.sh" ;;
     jarvis.verify.targeted) cmd="cd '$OPS_ROOT' && ALLOW_NON_NAS=1 TARGETED_TEST_FILES=\"$joined_args\" bash ./scripts/jarvis_pre_deploy_gate.sh" ;;
     jarvis.deploy.smart) cmd="cd '$OPS_ROOT' && bash ./deploy-smart.sh" ;;
-    jarvis.confidence) cmd="cd '$OPS_ROOT' && ./jarvis-ssh.sh \"cd /volume1/BRAIN/system/docker && bash ./scripts/jarvis_post_deploy_smoke.sh && bash ./scripts/jarvis_reality_check.sh\"" ;;
+    jarvis.confidence) cmd="cd '$OPS_ROOT' && ./jarvis-ssh.sh \"cd /volume1/BRAIN/system/docker && bash ./scripts/jarvis_post_deploy_smoke.sh\"" ;;
     jarvis.deploy.check) cmd="cd '$OPS_ROOT' && ps aux | grep -E 'deploy-smart|build-ingestion-fast|agent-deploy' | grep -v grep || true" ;;
     jarvis.deploy.ingestion) cmd="cd '$OPS_ROOT' && bash ./deploy-smart.sh --tier3" ;;
     jarvis.docs.preflight) cmd="cd '$OPS_ROOT' && bash ./preflight-docs.sh" ;;
     docs.cleanup.check) cmd="cd '$OPS_ROOT' && python3 ./scripts/docs_cleanup_propose.py && bash ./preflight-docs.sh" ;;
     jarvis.reality.check) cmd="cd '$OPS_ROOT' && ./jarvis-ssh.sh \"cd /volume1/BRAIN/system/docker && bash ./scripts/jarvis_reality_check.sh\"" ;;
     jarvis.safety.parallel) cmd="cd '$OPS_ROOT' && bash ./scripts/jarvis_safety_parallel.sh" ;;
+    jarvis.calibration.diagnose) cmd="cd '$OPS_ROOT' && ./jarvis-ssh.sh \"cd /volume1/BRAIN/system/docker && bash ./scripts/jarvis_calibration_diagnose.sh $joined_args\"" ;;
+    jarvis.calibration.cron.install) cmd="cd '$OPS_ROOT' && bash ./scripts/install_calibration_diagnose_cron.sh install" ;;
     jarvis.ci.pipeline.status) cmd="cd '$OPS_ROOT' && bash ./scripts/github_pipeline_status.sh $joined_args" ;;
     jarvis.ssh.pq.strict) cmd="cd '$OPS_ROOT' && bash ./scripts/ssh_pq_audit.sh --strict" ;;
     jarvis.ssh.pq.upgrade.preflight) cmd="cd '$OPS_ROOT' && bash ./scripts/ssh_pq_upgrade_preflight.sh" ;;
