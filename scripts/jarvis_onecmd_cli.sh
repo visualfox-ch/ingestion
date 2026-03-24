@@ -98,7 +98,7 @@ run_id() {
     jarvis.validate.fast) cmd="cd '$OPS_ROOT' && FAST_PREFLIGHT_AUTOSYNC_GENERATED=${FAST_PREFLIGHT_AUTOSYNC_GENERATED:-1} bash ./scripts/fast-preflight.sh" ;;
     jarvis.verify.targeted) cmd="cd '$OPS_ROOT' && ALLOW_NON_NAS=1 TARGETED_TEST_FILES=\"$joined_args\" bash ./scripts/jarvis_pre_deploy_gate.sh" ;;
     jarvis.deploy.smart) cmd="cd '$OPS_ROOT' && bash ./deploy-smart.sh" ;;
-    jarvis.confidence) cmd="cd '$OPS_ROOT' && ./jarvis-ssh.sh \"cd /volume1/BRAIN/system/docker && bash ./scripts/jarvis_post_deploy_smoke.sh\"" ;;
+    jarvis.confidence) cmd="cd '$OPS_ROOT' && ./jarvis-ssh.sh \"cd /volume1/BRAIN/system/docker && POST_DEPLOY_LIVE_CALIBRATION_LEVEL='${POST_DEPLOY_LIVE_CALIBRATION_LEVEL:-}' JARVIS_REQUIRE_LIVE_CALIBRATION_SNAPSHOT='${JARVIS_REQUIRE_LIVE_CALIBRATION_SNAPSHOT:-}' bash ./scripts/jarvis_post_deploy_smoke.sh\"" ;;
     jarvis.deploy.check) cmd="cd '$OPS_ROOT' && ps aux | grep -E 'deploy-smart|build-ingestion-fast|agent-deploy' | grep -v grep || true" ;;
     jarvis.deploy.ingestion) cmd="cd '$OPS_ROOT' && bash ./deploy-smart.sh --tier3" ;;
     jarvis.docs.preflight) cmd="cd '$OPS_ROOT' && bash ./preflight-docs.sh" ;;
@@ -129,6 +129,12 @@ run_id() {
   if [[ "$dry_run" == "1" ]]; then
     echo "$cmd"
     return
+  fi
+
+  if [[ "$id" == "jarvis.confidence" ]]; then
+    local effective_level="${POST_DEPLOY_LIVE_CALIBRATION_LEVEL:-core}"
+    local require_live="${JARVIS_REQUIRE_LIVE_CALIBRATION_SNAPSHOT:-0}"
+    echo "[onecmd] confidence config: level=$effective_level require_live_snapshot=$require_live"
   fi
 
   echo "[onecmd] running: $id"
