@@ -21,6 +21,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install test dependency
+        run: python3 -m pip install pytest
+
       - name: Install ruff
         run: pip install ruff --quiet
 
@@ -29,6 +32,9 @@ jobs:
 
       - name: Undefined name warnings (non-blocking)
         run: ruff check --select=F821 --no-cache app/ || true
+
+      - name: Confidence gate mapping guard
+        run: pytest -q tests/test_onecmd_confidence_nonblocking_static.py
 
       - name: F821 trend snapshot (non-blocking)
         run: |
